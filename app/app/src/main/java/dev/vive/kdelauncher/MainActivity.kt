@@ -16,12 +16,15 @@ import dev.vive.kdelauncher.ui.theme.KDELauncherTheme
 
 class MainActivity : ComponentActivity() {
 
+    private var launcherViewModel: LauncherViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         setContent {
             val viewModel: LauncherViewModel = viewModel()
+            launcherViewModel = viewModel
             val uiState by viewModel.uiState.collectAsState()
 
             KDELauncherTheme(
@@ -36,6 +39,16 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * Re-check default launcher status and work profile every time the user
+     * returns to the launcher. This handles the case where they went to
+     * Settings → Default Apps to change the home app.
+     */
+    override fun onResume() {
+        super.onResume()
+        launcherViewModel?.refreshStatus()
     }
 
     /**

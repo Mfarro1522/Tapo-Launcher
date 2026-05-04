@@ -1,17 +1,21 @@
 package dev.vive.kdelauncher.ui
 
 import android.app.Application
+import android.app.role.RoleManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.vive.kdelauncher.SetDefaultLauncherActivity
 import dev.vive.kdelauncher.data.IconPackInfo
 import dev.vive.kdelauncher.data.IconPackManager
 import dev.vive.kdelauncher.data.ProfileManager
 import dev.vive.kdelauncher.data.SettingsManager
+import dev.vive.kdelauncher.data.WorkProfileManager
 import dev.vive.kdelauncher.data.model.AppCategory
 import dev.vive.kdelauncher.data.model.AppModel
 import dev.vive.kdelauncher.data.model.Profile
@@ -44,6 +48,10 @@ data class LauncherUiState(
     val installedIconPacks: List<IconPackInfo> = emptyList(),
     val selectedIconPack: String? = null,
     val isLoadingIconPacks: Boolean = false,
+    // Launcher & Work Profile status
+    val isDefaultLauncher: Boolean = true,
+    val hasRealWorkProfile: Boolean = false,
+    val isWorkProfileLocked: Boolean = false,
 )
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,6 +60,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val profileManager = ProfileManager(application)
     private val settingsManager = SettingsManager(application)
     private val iconPackManager = IconPackManager(application)
+    private val workProfileManager = WorkProfileManager(application)
 
     private val _allApps = MutableStateFlow<List<AppModel>>(emptyList())
     private val _searchQuery = MutableStateFlow("")
@@ -64,6 +73,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _installedIconPacks = MutableStateFlow<List<IconPackInfo>>(emptyList())
     private val _selectedIconPack = MutableStateFlow(settingsManager.getSelectedIconPack())
     private val _isLoadingIconPacks = MutableStateFlow(false)
+    private val _isDefaultLauncher = MutableStateFlow(true)
+    private val _hasRealWorkProfile = MutableStateFlow(false)
+    private val _isWorkProfileLocked = MutableStateFlow(false)
 
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) { loadApps() }
@@ -84,12 +96,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         Triple(packs, selected, loading)
     }
 
+    private val _statusState = combine(
+        _isDefaultLauncher, _hasRealWorkProfile, _isWorkProfileLocked
+    ) { isDefault, hasWork, workLocked ->
+        Triple(isDefault, hasWork, workLocked)
+    }
+
     val uiState: StateFlow<LauncherUiState> = combine(
-        _allApps,
-        _searchQuery,
+        combine(_allApps, _searchQuery) { apps, q -> apps to q },
         combine(_activeCategory, _iconPackState) { cat, ipState -> cat to ipState },
-        _secondaryState
-    ) { allApps, query, (category, ipState), secondary ->
+        _secondaryState,
+        _statusState
+    ) { (allApps, query), (category, ipState), secondary, status ->
 
         val profile = secondary[0] as Profile
         val isDark = secondary[1] as Boolean
@@ -100,6 +118,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val installedPacks = ipState.first as List<IconPackInfo>
         val selectedPack = ipState.second as String?
         val loadingPacks = ipState.third as Boolean
+
+        val isDefault = status.first
+        val hasWork = status.second
+        val workLocked = status.third
 
         val favorites = profileManager.getFavorites()
         val workApps = profileManager.getWorkApps()
@@ -163,6 +185,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             installedIconPacks = installedPacks,
             selectedIconPack = selectedPack,
             isLoadingIconPacks = loadingPacks,
+            isDefaultLauncher = isDefault,
+            hasRealWorkProfile = hasWork,
+            isWorkProfileLocked = workLocked,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -175,9 +200,72 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             loadApps()
             loadIconPacks()
             registerPackageReceiver()
+            checkLauncherStatus()
+            checkWorkProfile()
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /** Check if we are the current default home/launcher app. */
+    private fun checkLauncherStatus() {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val isDefault = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val roleManager = app.getSystemService(Context.ROLE_SERVICE) as RoleManager
+                    roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+                } else {
+                    // Fallback: check if our package resolves as the HOME intent handler
+                    val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                        addCategory(android.content.Intent.CATEGORY_HOME)
+                    }
+                    val resolveInfo = app.packageManager.resolveActivity(
+                        intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+                    )
+                    resolveInfo?.activityInfo?.packageName == app.packageName
+                }
+                _isDefaultLauncher.value = isDefault
+            } catch (e: Exception) {
+                _isDefaultLauncher.value = true // assume OK, don't bother the user
+            }
+        }
+    }
+
+    /** Detect real Android Work Profile via UserManager. */
+    private fun checkWorkProfile() {
+        viewModelScope.launch {
+            try {
+                _hasRealWorkProfile.value = workProfileManager.hasRealWorkProfile()
+                if (_hasRealWorkProfile.value) {
+                    _isWorkProfileLocked.value = workProfileManager.isWorkProfileLocked()
+                }
+            } catch (e: Exception) {
+                _hasRealWorkProfile.value = false
+            }
+        }
+    }
+
+    /**
+     * Open the system screen to set this app as the default launcher.
+     * Works on Android 10+ via ACTION_HOME_SETTINGS deep-link,
+     * falls back to Default Apps settings on older versions.
+     */
+    fun openSetDefaultLauncherScreen() {
+        try {
+            val app = getApplication<Application>()
+            val intent = Intent(app, SetDefaultLauncherActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /** Refresh work profile and launcher status (call from onResume). */
+    fun refreshStatus() {
+        checkLauncherStatus()
+        checkWorkProfile()
     }
 
     private fun loadApps() {

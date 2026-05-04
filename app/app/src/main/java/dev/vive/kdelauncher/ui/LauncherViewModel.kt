@@ -62,52 +62,76 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val iconPackManager = IconPackManager(application)
     private val workProfileManager = WorkProfileManager(application)
 
+    // ── Core app list ────────────────────────────────────────────────────────
     private val _allApps = MutableStateFlow<List<AppModel>>(emptyList())
     private val _searchQuery = MutableStateFlow("")
     private val _activeCategory = MutableStateFlow(AppCategory.FAVORITES)
+
+    // ── Profile & theme ──────────────────────────────────────────────────────
     private val _currentProfile = MutableStateFlow(profileManager.getActiveProfile())
     private val _isDarkTheme = MutableStateFlow(settingsManager.isDarkTheme())
     private val _showSettings = MutableStateFlow(false)
     private val _isLoading = MutableStateFlow(true)
-    private val _settingsVersion = MutableStateFlow(0)
+
+    // ── Favorites & work tags — StateFlows so SharedPrefs is NOT read in combine ──
+    // Previously getFavorites()/getWorkApps() were called inside the combine lambda
+    // on EVERY state emission. Moved to dedicated flows to avoid repeated I/O.
+    private val _favorites = MutableStateFlow<Set<String>>(profileManager.getFavorites())
+    private val _workApps = MutableStateFlow<Set<String>>(profileManager.getWorkApps())
+
+    // ── Category settings — same: only updated when settings actually change ─
+    private val _categoryConfigs = MutableStateFlow(buildCategoryConfigs())
+    private val _visibleCategories = MutableStateFlow(buildVisibleCategories())
+
+    // ── Icon packs ───────────────────────────────────────────────────────────
     private val _installedIconPacks = MutableStateFlow<List<IconPackInfo>>(emptyList())
     private val _selectedIconPack = MutableStateFlow(settingsManager.getSelectedIconPack())
     private val _isLoadingIconPacks = MutableStateFlow(false)
+
+    // ── System status ────────────────────────────────────────────────────────
     private val _isDefaultLauncher = MutableStateFlow(true)
     private val _hasRealWorkProfile = MutableStateFlow(false)
     private val _isWorkProfileLocked = MutableStateFlow(false)
 
+    // ── Package change receiver ──────────────────────────────────────────────
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) { loadApps() }
     }
 
-    /**
-     * Helper flows combined into a secondary flow to stay within combine's 5-arg limit.
-     */
+    // ── Sub-combines to stay within 5-arg limit ──────────────────────────────
+
+    /** Profile + theme + UI toggles + loading state */
     private val _secondaryState = combine(
-        _currentProfile, _isDarkTheme, _showSettings, _isLoading, _settingsVersion
-    ) { profile, dark, settings, loading, _ ->
+        _currentProfile, _isDarkTheme, _showSettings, _isLoading
+    ) { profile, dark, settings, loading ->
         listOf<Any>(profile, dark, settings, loading)
     }
 
+    /** Icon pack state */
     private val _iconPackState = combine(
         _installedIconPacks, _selectedIconPack, _isLoadingIconPacks
     ) { packs, selected, loading ->
         Triple(packs, selected, loading)
     }
 
+    /** Device/launcher status */
     private val _statusState = combine(
         _isDefaultLauncher, _hasRealWorkProfile, _isWorkProfileLocked
     ) { isDefault, hasWork, workLocked ->
         Triple(isDefault, hasWork, workLocked)
     }
 
+    /** Favorites + work tags (avoids SharedPrefs reads inside the main combine) */
+    private val _profileData = combine(_favorites, _workApps) { fav, work -> fav to work }
+
+    // ── Main UI state ────────────────────────────────────────────────────────
+
     val uiState: StateFlow<LauncherUiState> = combine(
         combine(_allApps, _searchQuery) { apps, q -> apps to q },
         combine(_activeCategory, _iconPackState) { cat, ipState -> cat to ipState },
-        _secondaryState,
-        _statusState
-    ) { (allApps, query), (category, ipState), secondary, status ->
+        combine(_secondaryState, _statusState) { sec, stat -> sec to stat },
+        combine(_profileData, combine(_categoryConfigs, _visibleCategories) { c, v -> c to v }) { pd, cv -> pd to cv }
+    ) { (allApps, query), (category, ipState), (secondary, status), (profileData, catData) ->
 
         val profile = secondary[0] as Profile
         val isDark = secondary[1] as Boolean
@@ -123,21 +147,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val hasWork = status.second
         val workLocked = status.third
 
-        val favorites = profileManager.getFavorites()
-        val workApps = profileManager.getWorkApps()
+        val (favorites, workApps) = profileData
+        val (categoryConfigs, visibleCategories) = catData
 
-        val categoryConfigs = AppCategory.entries.map { cat ->
-            CategoryConfig(
-                category = cat,
-                displayName = settingsManager.getCategoryDisplayName(cat),
-                iconName = settingsManager.getCategoryIconName(cat),
-                isHidden = settingsManager.getHiddenCategories().contains(cat.name),
-            )
-        }
-
-        val hiddenSet = settingsManager.getHiddenCategories()
-        val visibleCategories = AppCategory.entries.filter { it.name !in hiddenSet }
-
+        // Annotate apps with favorite/work tags — no I/O, pure in-memory ops
         val appsWithMeta = allApps.map { app ->
             app.copy(
                 isFavorite = favorites.contains(app.packageName),
@@ -207,71 +220,23 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Check if we are the current default home/launcher app. */
-    private fun checkLauncherStatus() {
-        viewModelScope.launch {
-            try {
-                val app = getApplication<Application>()
-                val isDefault = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val roleManager = app.getSystemService(Context.ROLE_SERVICE) as RoleManager
-                    roleManager.isRoleHeld(RoleManager.ROLE_HOME)
-                } else {
-                    // Fallback: check if our package resolves as the HOME intent handler
-                    val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
-                        addCategory(android.content.Intent.CATEGORY_HOME)
-                    }
-                    val resolveInfo = app.packageManager.resolveActivity(
-                        intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
-                    )
-                    resolveInfo?.activityInfo?.packageName == app.packageName
-                }
-                _isDefaultLauncher.value = isDefault
-            } catch (e: Exception) {
-                _isDefaultLauncher.value = true // assume OK, don't bother the user
-            }
-        }
-    }
-
-    /** Detect real Android Work Profile via UserManager. */
-    private fun checkWorkProfile() {
-        viewModelScope.launch {
-            try {
-                _hasRealWorkProfile.value = workProfileManager.hasRealWorkProfile()
-                if (_hasRealWorkProfile.value) {
-                    _isWorkProfileLocked.value = workProfileManager.isWorkProfileLocked()
-                }
-            } catch (e: Exception) {
-                _hasRealWorkProfile.value = false
-            }
-        }
-    }
+    // ── Private loaders ──────────────────────────────────────────────────────
 
     /**
-     * Open the system screen to set this app as the default launcher.
-     * Works on Android 10+ via ACTION_HOME_SETTINGS deep-link,
-     * falls back to Default Apps settings on older versions.
+     * Two-phase loading:
+     * Phase 1 — metadata only (instant), makes UI responsive immediately.
+     * Phase 2 — icons from LruCache or disk decode.
      */
-    fun openSetDefaultLauncherScreen() {
-        try {
-            val app = getApplication<Application>()
-            val intent = Intent(app, SetDefaultLauncherActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            app.startActivity(intent)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    /** Refresh work profile and launcher status (call from onResume). */
-    fun refreshStatus() {
-        checkLauncherStatus()
-        checkWorkProfile()
-    }
-
     private fun loadApps() {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
+
+                // Phase 1: names and categories only — nearly instant
+                _allApps.value = appRepository.getInstalledAppsMetadata()
+                _isLoading.value = false   // UI is usable now
+
+                // Phase 2: icons (from cache if available, decode otherwise)
                 _allApps.value = appRepository.getInstalledApps(
                     selectedIconPack = _selectedIconPack.value
                 )
@@ -317,7 +282,64 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ── User actions ────────────────────────────────────────────
+    /** Check if we are the current default home/launcher app. */
+    private fun checkLauncherStatus() {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val isDefault = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val roleManager = app.getSystemService(Context.ROLE_SERVICE) as RoleManager
+                    roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+                } else {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                        addCategory(android.content.Intent.CATEGORY_HOME)
+                    }
+                    val resolveInfo = app.packageManager.resolveActivity(
+                        intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+                    )
+                    resolveInfo?.activityInfo?.packageName == app.packageName
+                }
+                _isDefaultLauncher.value = isDefault
+            } catch (e: Exception) {
+                _isDefaultLauncher.value = true
+            }
+        }
+    }
+
+    /** Detect real Android Work Profile via UserManager. */
+    private fun checkWorkProfile() {
+        viewModelScope.launch {
+            try {
+                _hasRealWorkProfile.value = workProfileManager.hasRealWorkProfile()
+                if (_hasRealWorkProfile.value) {
+                    _isWorkProfileLocked.value = workProfileManager.isWorkProfileLocked()
+                }
+            } catch (e: Exception) {
+                _hasRealWorkProfile.value = false
+            }
+        }
+    }
+
+    /**
+     * Builds CategoryConfig list from SettingsManager.
+     * Called once at init and again when settings change — NOT on every state emission.
+     */
+    private fun buildCategoryConfigs(): List<CategoryConfig> =
+        AppCategory.entries.map { cat ->
+            CategoryConfig(
+                category = cat,
+                displayName = settingsManager.getCategoryDisplayName(cat),
+                iconName = settingsManager.getCategoryIconName(cat),
+                isHidden = settingsManager.getHiddenCategories().contains(cat.name),
+            )
+        }
+
+    private fun buildVisibleCategories(): List<AppCategory> {
+        val hiddenSet = settingsManager.getHiddenCategories()
+        return AppCategory.entries.filter { it.name !in hiddenSet }
+    }
+
+    // ── User actions ─────────────────────────────────────────────────────────
 
     fun setSearchQuery(query: String) { _searchQuery.value = query }
 
@@ -328,17 +350,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Reset the launcher to its initial home state:
-     * - Go to FAVORITES category
-     * - Clear any active search
-     * - Close settings panel
-     * Called when the user presses the home pill indicator.
+     * FAVORITES category, no search, settings closed.
      */
     fun resetToHome() {
         _searchQuery.value = ""
         _activeCategory.value = AppCategory.FAVORITES
         _showSettings.value = false
     }
-
 
     fun toggleProfile() {
         val newProfile = if (_currentProfile.value.type == ProfileType.PERSONAL)
@@ -357,18 +375,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun setCategoryDisplayName(category: AppCategory, name: String) {
         settingsManager.setCategoryDisplayName(category, name)
-        _settingsVersion.value++
+        _categoryConfigs.value = buildCategoryConfigs()
     }
 
     fun setCategoryIconName(category: AppCategory, iconName: String) {
         settingsManager.setCategoryIconName(category, iconName)
-        _settingsVersion.value++
+        _categoryConfigs.value = buildCategoryConfigs()
     }
 
     fun toggleCategoryHidden(category: AppCategory) {
         val hidden = settingsManager.getHiddenCategories().contains(category.name)
         settingsManager.setCategoryHidden(category, !hidden)
-        _settingsVersion.value++
+        _categoryConfigs.value = buildCategoryConfigs()
+        _visibleCategories.value = buildVisibleCategories()
     }
 
     fun resetSettings() {
@@ -376,7 +395,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _isDarkTheme.value = true
         _selectedIconPack.value = null
         appRepository.clearIconPackCache()
-        _settingsVersion.value++
+        _categoryConfigs.value = buildCategoryConfigs()
+        _visibleCategories.value = buildVisibleCategories()
         loadApps()
     }
 
@@ -384,7 +404,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         settingsManager.setSelectedIconPack(packageName)
         _selectedIconPack.value = packageName
         appRepository.clearIconPackCache()
-        // Reload all app icons with the new pack
         loadApps()
     }
 
@@ -398,12 +417,30 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleFavorite(app: AppModel) {
         profileManager.toggleFavorite(app.packageName)
-        _allApps.value = _allApps.value.toList()
+        // Update the StateFlow directly — no SharedPrefs read in combine needed
+        _favorites.value = profileManager.getFavorites()
     }
 
     fun toggleWorkApp(app: AppModel) {
         profileManager.toggleWorkApp(app.packageName)
-        _allApps.value = _allApps.value.toList()
+        _workApps.value = profileManager.getWorkApps()
+    }
+
+    fun openSetDefaultLauncherScreen() {
+        try {
+            val app = getApplication<Application>()
+            val intent = Intent(app, SetDefaultLauncherActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /** Refresh work profile and launcher status (called from onResume). */
+    fun refreshStatus() {
+        checkLauncherStatus()
+        checkWorkProfile()
     }
 
     override fun onCleared() {

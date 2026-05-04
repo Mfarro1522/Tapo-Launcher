@@ -24,17 +24,36 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
 
-            <intent-filter>
+            <!--
+                HOME intent-filter: registers this app as a valid home screen / launcher.
+                Android will show the "Choose Home App" dialog when the user presses Home
+                if no default launcher is set, OR when the user manually changes it from
+                Settings → Apps → Default Apps → Home App.
+            -->
+            <intent-filter android:priority="1">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
+            <!-- Makes the app also appear in the app drawer as a regular app icon -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            DefaultLauncherActivity: a transparent trampoline activity that opens
+            Android's "Choose Default Home App" system settings screen.
+            Launched from the launcher's own settings panel when the user taps
+            "Set as Default Launcher".
+        -->
+        <activity
+            android:name=".SetDefaultLauncherActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
     </application>
 
 </manifest>

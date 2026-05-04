@@ -26,14 +26,14 @@ import dev.vive.kdelauncher.ui.components.CategoryConfig
 import dev.vive.kdelauncher.ui.components.IconSize
 import dev.vive.kdelauncher.ui.components.parseIconSize
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -86,13 +86,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _showSettings = MutableStateFlow(false)
     private val _isLoading = MutableStateFlow(true)
     private val _homeResetCounter = MutableStateFlow(0)
-    private val iconLoadMutex = Mutex()
-    private val inFlightIcons = mutableSetOf<String>()
-    @Volatile private var iconLoadGeneration = 0
 
     // ── Favorites & work tags — StateFlows so SharedPrefs is NOT read in combine ──
-    // Previously getFavorites()/getWorkApps() were called inside the combine lambda
-    // on EVERY state emission. Moved to dedicated flows to avoid repeated I/O.
     private val _favorites = MutableStateFlow<Set<String>>(profileManager.getFavorites())
     private val _workApps = MutableStateFlow<Set<String>>(profileManager.getWorkApps())
 
@@ -277,40 +272,86 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // ── Private loaders ──────────────────────────────────────────────────────
 
     /**
-     * Metadata-only loading: icons are requested on demand to avoid startup jank.
+     * Two-phase loading:
+     * 1. Show metadata-only apps → UI is instantly usable with names/categories
+     * 2. Batch-load all icons in parallel → single state update when done
+     *
+     * This avoids the previous approach of 150+ separate LaunchedEffect calls,
+     * each triggering a full state recomputation for a single icon.
      */
     private fun loadApps() {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
 
-                // Names and categories only — nearly instant
+                // Phase 1: metadata only — near instant
                 val personalMeta = appRepository.getInstalledAppsMetadata()
-                val workMeta = loadWorkApps(loadIcons = false)
-                _allApps.value = mergeApps(personalMeta, workMeta)
-                _isLoading.value = false   // UI is usable now
+                val workMeta = withContext(Dispatchers.IO) {
+                    if (!workProfileManager.hasRealWorkProfile()) emptyList()
+                    else workProfileManager.getWorkProfileApps(loadIcons = false).map { app ->
+                        AppModel(
+                            packageName = app.packageName,
+                            activityName = app.activityName,
+                            label = app.label,
+                            iconBitmap = null,
+                            category = AppCategorizer.categorize(app.packageName, app.androidCategory),
+                            userHandle = app.userHandle
+                        )
+                    }
+                }
+                val metadataApps = mergeApps(personalMeta, workMeta)
+
+                // Show apps immediately (no icons yet but names visible)
+                _allApps.value = metadataApps
+                _isLoading.value = false   // UI usable NOW
+
+                // Phase 2: batch-load ALL icons in parallel → single emission
+                val selectedPack = _selectedIconPack.value
+                val iconsByKey = withContext(Dispatchers.IO) {
+                    val personalDeferreds = personalMeta.map { app ->
+                        async {
+                            val key = iconKey(app)
+                            val bitmap = appRepository.getAppIcon(
+                                packageName = app.packageName,
+                                activityName = app.activityName,
+                                selectedIconPack = selectedPack
+                            )
+                            key to bitmap
+                        }
+                    }
+                    // Load work profile icons too if they exist
+                    val workDeferreds = if (workMeta.isNotEmpty()) {
+                        workMeta.map { app ->
+                            async {
+                                val key = iconKey(app)
+                                val bitmap = if (app.userHandle != null) {
+                                    workProfileManager.loadWorkAppIcon(
+                                        packageName = app.packageName,
+                                        activityName = app.activityName,
+                                        userHandle = app.userHandle
+                                    )
+                                } else null
+                                key to bitmap
+                            }
+                        }
+                    } else emptyList()
+
+                    (personalDeferreds + workDeferreds).awaitAll().toMap()
+                }
+
+                // Single emission with all icons populated
+                _allApps.value = metadataApps.map { app ->
+                    val key = iconKey(app)
+                    val bitmap = iconsByKey[key]
+                    if (bitmap != null) app.copy(iconBitmap = bitmap) else app
+                }
+
             } catch (e: Exception) {
                 e.printStackTrace()
                 _allApps.value = emptyList()
             } finally {
+                // Ensure loading is false even if something failed mid-way
                 _isLoading.value = false
-            }
-        }
-    }
-
-    private suspend fun loadWorkApps(loadIcons: Boolean): List<AppModel> {
-        return withContext(Dispatchers.IO) {
-            if (!workProfileManager.hasRealWorkProfile()) return@withContext emptyList()
-
-            workProfileManager.getWorkProfileApps(loadIcons).map { app ->
-                AppModel(
-                    packageName = app.packageName,
-                    activityName = app.activityName,
-                    label = app.label,
-                    iconBitmap = app.iconBitmap,
-                    category = AppCategorizer.categorize(app.packageName, app.androidCategory),
-                    userHandle = app.userHandle
-                )
             }
         }
     }
@@ -499,7 +540,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _showAppLabels.value = settingsManager.isShowAppLabels()
         _selectedIconPack.value = null
         appRepository.clearIconPackCache()
-        bumpIconGeneration()
         _categoryOverrides.value = emptyMap()
         _categoryConfigs.value = buildCategoryConfigs()
         _visibleCategories.value = buildVisibleCategories()
@@ -510,7 +550,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         settingsManager.setSelectedIconPack(packageName)
         _selectedIconPack.value = packageName
         appRepository.clearIconPackCache()
-        bumpIconGeneration()
         loadApps()
     }
 
@@ -546,57 +585,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun requestIconLoad(app: AppModel) {
-        if (app.iconBitmap != null) return
-
-        val key = iconKey(app)
-        viewModelScope.launch {
-            val shouldLoad = iconLoadMutex.withLock {
-                if (inFlightIcons.contains(key)) false else {
-                    inFlightIcons.add(key)
-                    true
-                }
-            }
-
-            if (!shouldLoad) return@launch
-
-            val generation = iconLoadGeneration
-            try {
-                val bitmap = if (app.userHandle != null) {
-                    workProfileManager.loadWorkAppIcon(
-                        packageName = app.packageName,
-                        activityName = app.activityName,
-                        userHandle = app.userHandle
-                    )
-                } else {
-                    appRepository.getAppIcon(
-                        packageName = app.packageName,
-                        activityName = app.activityName,
-                        selectedIconPack = _selectedIconPack.value
-                    )
-                }
-
-                if (bitmap != null && generation == iconLoadGeneration) {
-                    _allApps.value = _allApps.value.map { current ->
-                        if (current.packageName == app.packageName &&
-                            current.activityName == app.activityName &&
-                            current.userHandle == app.userHandle
-                        ) {
-                            current.copy(iconBitmap = bitmap)
-                        } else {
-                            current
-                        }
-                    }
-                }
-            } finally {
-                iconLoadMutex.withLock { inFlightIcons.remove(key) }
-            }
-        }
-    }
-
     fun toggleFavorite(app: AppModel) {
         profileManager.toggleFavorite(app.packageName)
-        // Update the StateFlow directly — no SharedPrefs read in combine needed
         _favorites.value = profileManager.getFavorites()
     }
 
@@ -620,10 +610,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun refreshStatus() {
         checkLauncherStatus()
         checkWorkProfile()
-    }
-
-    private fun bumpIconGeneration() {
-        iconLoadGeneration += 1
     }
 
     private fun iconKey(app: AppModel): String {

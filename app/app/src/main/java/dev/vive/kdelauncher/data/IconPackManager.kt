@@ -83,7 +83,7 @@ class IconPackManager(private val context: Context) {
                     } catch (e: Exception) { pkg }
 
                     val icon = try {
-                        ri.loadIcon(pm)?.toBitmap(72, 72)
+                        ri.loadIcon(pm)?.toBitmap(128, 128)
                     } catch (e: Exception) { null }
 
                     packs[pkg] = IconPackInfo(pkg, label, icon)
@@ -119,7 +119,7 @@ class IconPackManager(private val context: Context) {
             if (resId == 0) return@withContext null
 
             val drawable: Drawable = resources.getDrawable(resId, null)
-            drawable.toBitmap(96, 96)
+            drawable.toBitmap(128, 128)
         } catch (e: Exception) {
             null
         }

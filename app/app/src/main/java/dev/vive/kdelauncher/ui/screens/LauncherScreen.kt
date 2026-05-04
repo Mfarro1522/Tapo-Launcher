@@ -205,7 +205,6 @@ fun LauncherScreen(
                 onToggleFavorite = { viewModel.toggleFavorite(it) },
                 onAssignCategory = { app, category -> viewModel.setCategoryOverride(app, category) },
                 onClearCategory = { viewModel.clearCategoryOverride(it) },
-                onRequestIcon = { viewModel.requestIconLoad(it) },
                 modifier = Modifier.weight(1f)
             )
         }

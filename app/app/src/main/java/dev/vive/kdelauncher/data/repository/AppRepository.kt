@@ -33,8 +33,10 @@ import kotlinx.coroutines.withContext
  *    [getInstalledApps] then loads/caches icons. Use both in sequence for a
  *    perceived-instant start.
  *
- * 3. **Icon size** — Bitmaps are decoded at 72×72 (was 96×96). Each icon goes from
- *    ~36 KB to ~20 KB; for 150 apps that's saving ~2.4 MB of memory and decode time.
+ * 3. **Icon size** — Bitmaps are decoded at 128×128 for crisp rendering at any
+ *    launcher icon size (SMALL=28dp, MEDIUM=32dp, LARGE=40dp) without blurriness
+ *    from upscaling. The memory cache uses 1/4 of available heap (capped at 32 MB)
+ *    to comfortably hold 500+ 128×128 ARGB_8888 icons (~500 MB → ~31 MB).
  */
 class AppRepository(private val context: Context) {
 
@@ -43,12 +45,12 @@ class AppRepository(private val context: Context) {
     companion object {
         /**
          * Max memory for icon cache.
-         * Conservative cap (8 MB) keeps us safe on low-end devices with 1-2 GB RAM.
-         * 56×56 ARGB_8888 ≈ 12 KB/icon → ~680 icons fit in 8 MB, well above any device.
+         * 128×128 ARGB_8888 ≈ 64 KB/icon → 500 icons ~ 31 MB.
+         * Uses 1/4 of available heap (capped at 32 MB) to cover any device.
          */
         private val CACHE_MAX_KB = minOf(
-            (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt(),
-            8 * 1024   // hard cap at 8 MB
+            (Runtime.getRuntime().maxMemory() / 1024 / 4).toInt(),
+            32 * 1024  // hard cap at 32 MB
         )
     }
 
@@ -171,7 +173,7 @@ class AppRepository(private val context: Context) {
                     ComponentName(packageName, activityName),
                     0
                 )
-                activityInfo.loadIcon(pm)?.toBitmap(56, 56)
+                activityInfo.loadIcon(pm)?.toBitmap(128, 128)
             } catch (_: Exception) {
                 null
             }
@@ -221,11 +223,11 @@ class AppRepository(private val context: Context) {
                 componentPackage = componentPackage,
                 activityName = activityName
             ) ?: try {
-                ri.loadIcon(pm)?.toBitmap(56, 56)
+                ri.loadIcon(pm)?.toBitmap(128, 128)
             } catch (_: Exception) { null }
         } else {
             try {
-                ri.loadIcon(pm)?.toBitmap(56, 56)   // 56 px covers all launcher grid sizes
+                ri.loadIcon(pm)?.toBitmap(128, 128)
             } catch (_: Exception) { null }
         }
     }

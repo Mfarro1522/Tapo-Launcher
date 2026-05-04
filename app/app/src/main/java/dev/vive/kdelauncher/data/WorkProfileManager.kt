@@ -74,7 +74,7 @@ class WorkProfileManager(private val context: Context) {
                     .map { activity ->
                         val iconBitmap = if (loadIcons) {
                             try {
-                                activity.getIcon(0)?.toBitmap(56, 56)
+                                activity.getIcon(0)?.toBitmap(128, 128)
                             } catch (_: Exception) {
                                 null
                             }
@@ -135,7 +135,7 @@ class WorkProfileManager(private val context: Context) {
                 val activity = launcherApps
                     .getActivityList(packageName, userHandle)
                     .firstOrNull { it.name == activityName }
-                activity?.getIcon(0)?.toBitmap(56, 56)
+                activity?.getIcon(0)?.toBitmap(128, 128)
             } else {
                 null
             }

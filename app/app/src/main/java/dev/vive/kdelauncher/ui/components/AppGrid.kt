@@ -29,7 +29,6 @@ fun AppGrid(
     onToggleFavorite: (AppModel) -> Unit,
     onAssignCategory: (AppModel, AppCategory) -> Unit,
     onClearCategory: (AppModel) -> Unit,
-    onRequestIcon: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalColors.current
@@ -102,7 +101,6 @@ fun AppGrid(
                         onToggleFavorite = { onToggleFavorite(app) },
                         onAssignCategory = { category -> onAssignCategory(app, category) },
                         onClearCategory = { onClearCategory(app) },
-                        onRequestIcon = onRequestIcon,
                         activeCategory = activeCategory,
                         categoryConfigs = categoryConfigs,
                         visibleCategories = visibleCategories,

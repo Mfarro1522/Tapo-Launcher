@@ -1,14 +1,11 @@
 package dev.vive.kdelauncher.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -25,7 +22,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -74,7 +72,6 @@ fun AppIcon(
     onToggleFavorite: () -> Unit,
     onAssignCategory: (AppCategory) -> Unit,
     onClearCategory: () -> Unit,
-    onRequestIcon: (AppModel) -> Unit,
     activeCategory: AppCategory,
     categoryConfigs: List<CategoryConfig>,
     visibleCategories: List<AppCategory>,
@@ -85,20 +82,12 @@ fun AppIcon(
 ) {
     val colors = LocalColors.current
     val accent = LocalLauncherAccent.current
-    var isPressed by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var showCategoryPicker by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.95f else 1f,
-        animationSpec = tween(100), label = "appScale"
-    )
+    val isWork = app.profileTag == ProfileType.WORK
 
     val imageBitmap = remember(app.iconBitmap) {
         app.iconBitmap?.asImageBitmap()
-    }
-
-    LaunchedEffect(app.packageName, app.activityName, app.userHandle, app.iconBitmap) {
-        if (app.iconBitmap == null) onRequestIcon(app)
     }
 
     val categoryOptions = remember(visibleCategories, categoryConfigs) {
@@ -113,8 +102,6 @@ fun AppIcon(
 
     val removeAction = if (activeCategory == AppCategory.FAVORITES)
         onToggleFavorite else onClearCategory
-    val menuShape = RoundedCornerShape(14.dp)
-    val menuItemBg = colors.surfaceVariant.copy(alpha = 0.7f)
     val favoriteIcon = if (app.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder
     val showRemoveAction = activeCategory != AppCategory.ALL
 
@@ -125,79 +112,76 @@ fun AppIcon(
                 .clip(RoundedCornerShape(16.dp))
                 .pointerInput(Unit) {
                     detectTapGestures(
-                        onPress = {
-                            isPressed = true
-                            try { awaitRelease() } finally { isPressed = false }
-                        },
                         onTap = { onClick() },
                         onLongPress = { menuExpanded = true }
                     )
                 }
-                .padding(horizontal = 4.dp, vertical = 8.dp)
-                .scale(scale),
+                .padding(horizontal = 4.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(if (showLabel) 6.dp else 2.dp)
+            verticalArrangement = Arrangement.spacedBy(if (showLabel) 6.dp else 4.dp)
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                val isWork = app.profileTag == ProfileType.WORK
-                val (containerSize, iconSizeDp) = getIconDimensions(iconSize)
-                
-                Box(
-                    modifier = Modifier
-                        .size(containerSize.dp)
-                        .then(
-                            if (showIconBackground) {
-                                Modifier
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(
-                                        if (isWork) LauncherColors.AccentOrangeBgLight
-                                        else colors.surfaceVariant.copy(alpha = 0.8f)
-                                    )
-                                    .border(
-                                        width = 1.dp,
-                                        color = if (isWork) LauncherColors.AccentOrange.copy(alpha = 0.2f)
-                                        else colors.border.copy(alpha = 0.5f),
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
-                            } else {
-                                Modifier
-                            }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (imageBitmap != null) {
-                        Image(
-                            bitmap = imageBitmap,
-                            contentDescription = app.label,
-                            modifier = Modifier.size(iconSizeDp.dp),
-                            contentScale = ContentScale.Fit
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Android,
-                            contentDescription = app.label,
-                            modifier = Modifier.size((iconSizeDp * 0.6f).dp),
-                            tint = if (isWork) LauncherColors.AccentOrange
-                            else colors.onBackground.copy(alpha = 0.7f)
-                        )
-                    }
-                }
+            // ── Icon container with optional background ────────────────────
+            val (containerSize, iconSizeDp) = getIconDimensions(iconSize)
 
-                if (app.profileTag == ProfileType.WORK) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .offset(x = 2.dp, y = 2.dp)
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(colors.background)
-                            .padding(2.dp)
-                            .clip(CircleShape)
-                            .background(LauncherColors.AccentOrange)
+            Box(
+                modifier = Modifier
+                    .size(containerSize.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .then(
+                        if (showIconBackground) {
+                            Modifier
+                                .background(
+                                    if (isWork) LauncherColors.AccentOrangeBgLight
+                                    else colors.surfaceVariant.copy(alpha = 0.8f)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isWork) LauncherColors.AccentOrange.copy(alpha = 0.2f)
+                                    else colors.border.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                        } else Modifier
+                    )
+                    .then(
+                        // Work badge drawn directly on the background canvas — no extra Box nodes
+                        if (isWork) {
+                            Modifier.drawBehind {
+                                // Outer circle (background color)
+                                drawCircle(
+                                    color = colors.background,
+                                    radius = 9.dp.toPx(),
+                                    center = Offset(size.width - 8.dp.toPx(), size.height - 8.dp.toPx())
+                                )
+                                // Inner circle (orange)
+                                drawCircle(
+                                    color = LauncherColors.AccentOrange,
+                                    radius = 6.dp.toPx(),
+                                    center = Offset(size.width - 8.dp.toPx(), size.height - 8.dp.toPx())
+                                )
+                            }
+                        } else Modifier
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (imageBitmap != null) {
+                    Image(
+                        bitmap = imageBitmap,
+                        contentDescription = app.label,
+                        modifier = Modifier.size(iconSizeDp.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Android,
+                        contentDescription = app.label,
+                        modifier = Modifier.size((iconSizeDp * 0.6f).dp),
+                        tint = if (isWork) LauncherColors.AccentOrange
+                        else colors.onBackground.copy(alpha = 0.7f)
                     )
                 }
             }
 
+            // ── Label ──────────────────────────────────────────────────────
             if (showLabel) {
                 Text(
                     text = app.label,
@@ -211,60 +195,26 @@ fun AppIcon(
             }
         }
 
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-            offset = DpOffset(6.dp, 6.dp),
-            modifier = Modifier
-                .widthIn(min = 140.dp)
-                .clip(menuShape)
-                .background(colors.surface)
-                .border(1.dp, colors.border.copy(alpha = 0.8f), menuShape)
-                .padding(horizontal = 8.dp, vertical = 8.dp)
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+        // ── Context menu ──────────────────────────────────────────────────
+        if (menuExpanded) {
+            val menuShape = RoundedCornerShape(14.dp)
+            val menuItemBg = colors.surfaceVariant.copy(alpha = 0.7f)
+
+            DropdownMenu(
+                expanded = true,
+                onDismissRequest = { menuExpanded = false },
+                offset = DpOffset(6.dp, 6.dp),
+                modifier = Modifier
+                    .widthIn(min = 140.dp)
+                    .clip(menuShape)
+                    .background(colors.surface)
+                    .border(1.dp, colors.border.copy(alpha = 0.8f), menuShape)
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(menuItemBg)
-                        .clickable {
-                            menuExpanded = false
-                            onToggleFavorite()
-                        },
-                    contentAlignment = Alignment.Center
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = favoriteIcon,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = if (app.isFavorite) accent.primary else colors.onSurfaceVariant
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(menuItemBg)
-                        .clickable {
-                            menuExpanded = false
-                            showCategoryPicker = true
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = colors.onSurfaceVariant
-                    )
-                }
-
-                if (showRemoveAction) {
                     Box(
                         modifier = Modifier
                             .size(34.dp)
@@ -272,16 +222,56 @@ fun AppIcon(
                             .background(menuItemBg)
                             .clickable {
                                 menuExpanded = false
-                                removeAction()
+                                onToggleFavorite()
                             },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.DeleteOutline,
+                            imageVector = favoriteIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (app.isFavorite) accent.primary else colors.onSurfaceVariant
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(menuItemBg)
+                            .clickable {
+                                menuExpanded = false
+                                showCategoryPicker = true
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Add,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp),
                             tint = colors.onSurfaceVariant
                         )
+                    }
+
+                    if (showRemoveAction) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(menuItemBg)
+                                .clickable {
+                                    menuExpanded = false
+                                    removeAction()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.DeleteOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = colors.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

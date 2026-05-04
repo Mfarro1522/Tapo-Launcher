@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">Vøid Launcher</string>
+    <string name="search_placeholder">Buscar…</string>
+    <string name="no_results">Sin resultados</string>
+    <string name="change_profile">Cambiar perfil</string>
+    <string name="profile_personal">Personal</string>
+    <string name="profile_work">Trabajo</string>
+    <string name="category_favorites">Favoritos</string>
+    <string name="category_all">Todas</string>
+    <string name="category_development">Desarrollo</string>
+    <string name="category_graphics">Gráficos</string>
+    <string name="category_internet">Internet</string>
+    <string name="category_games">Juegos</string>
+    <string name="category_multimedia">Multimedia</string>
+    <string name="category_system">Sistema</string>
+    <string name="category_utilities">Utilidades</string>
+    <string name="quick_wifi">WiFi</string>
+    <string name="quick_bt">BT</string>
+    <string name="quick_dnd">DND</string>
+    <string name="quick_flashlight">Light</string>
+    <string name="quick_sound">Sound</string>
+    <string name="quick_rotation">Rotate</string>
+</resources>

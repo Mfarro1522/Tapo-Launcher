@@ -60,3 +60,4 @@ class MainActivity : ComponentActivity() {
         // Do nothing — launcher should not exit on back press
     }
 }
+

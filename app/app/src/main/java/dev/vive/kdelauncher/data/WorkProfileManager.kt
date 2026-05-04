@@ -124,6 +124,26 @@ class WorkProfileManager(private val context: Context) {
         }
     }
 
+    fun loadWorkAppIcon(
+        packageName: String,
+        activityName: String,
+        userHandle: UserHandle
+    ): Bitmap? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+                val activity = launcherApps
+                    .getActivityList(packageName, userHandle)
+                    .firstOrNull { it.name == activityName }
+                activity?.getIcon(0)?.toBitmap(56, 56)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /**
      * Check if the work profile is currently paused/locked (quiet mode).
      * When in quiet mode, work apps are not launchable until the user unlocks.

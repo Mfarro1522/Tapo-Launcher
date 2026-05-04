@@ -25,6 +25,7 @@ fun AppGrid(
     categoryConfigs: List<CategoryConfig>,
     onAppClick: (AppModel) -> Unit,
     onAppLongClick: (AppModel) -> Unit,
+    onRequestIcon: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalColors.current
@@ -106,7 +107,8 @@ fun AppGrid(
                     AppIcon(
                         app = app,
                         onClick = { onAppClick(app) },
-                        onLongClick = { onAppLongClick(app) }
+                        onLongClick = { onAppLongClick(app) },
+                        onRequestIcon = onRequestIcon
                     )
                 }
             }

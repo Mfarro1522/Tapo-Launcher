@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -76,6 +78,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _showSettings = MutableStateFlow(false)
     private val _isLoading = MutableStateFlow(true)
     private val _homeResetCounter = MutableStateFlow(0)
+    private val iconLoadMutex = Mutex()
+    private val inFlightIcons = mutableSetOf<String>()
+    @Volatile private var iconLoadGeneration = 0
 
     // ── Favorites & work tags — StateFlows so SharedPrefs is NOT read in combine ──
     // Previously getFavorites()/getWorkApps() were called inside the combine lambda
@@ -167,7 +172,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
         val profileFiltered = when (profile.type) {
             ProfileType.WORK -> appsWithMeta.filter { it.profileTag == ProfileType.WORK }
-            ProfileType.PERSONAL -> appsWithMeta
+            ProfileType.PERSONAL -> appsWithMeta.filter { it.profileTag == ProfileType.PERSONAL }
         }
 
         val filtered = if (query.isNotBlank()) {
@@ -231,27 +236,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // ── Private loaders ──────────────────────────────────────────────────────
 
     /**
-     * Two-phase loading:
-     * Phase 1 — metadata only (instant), makes UI responsive immediately.
-     * Phase 2 — icons from LruCache or disk decode.
+     * Metadata-only loading: icons are requested on demand to avoid startup jank.
      */
     private fun loadApps() {
         viewModelScope.launch {
             try {
                 _isLoading.value = true
 
-                // Phase 1: names and categories only — nearly instant
+                // Names and categories only — nearly instant
                 val personalMeta = appRepository.getInstalledAppsMetadata()
                 val workMeta = loadWorkApps(loadIcons = false)
                 _allApps.value = mergeApps(personalMeta, workMeta)
                 _isLoading.value = false   // UI is usable now
-
-                // Phase 2: icons (from cache if available, decode otherwise)
-                val personalFull = appRepository.getInstalledApps(
-                    selectedIconPack = _selectedIconPack.value
-                )
-                val workFull = loadWorkApps(loadIcons = true)
-                _allApps.value = mergeApps(personalFull, workFull)
             } catch (e: Exception) {
                 e.printStackTrace()
                 _allApps.value = emptyList()
@@ -441,6 +437,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _isDarkTheme.value = true
         _selectedIconPack.value = null
         appRepository.clearIconPackCache()
+        bumpIconGeneration()
         _categoryConfigs.value = buildCategoryConfigs()
         _visibleCategories.value = buildVisibleCategories()
         loadApps()
@@ -450,6 +447,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         settingsManager.setSelectedIconPack(packageName)
         _selectedIconPack.value = packageName
         appRepository.clearIconPackCache()
+        bumpIconGeneration()
         loadApps()
     }
 
@@ -468,6 +466,54 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (intent != null) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             getApplication<Application>().startActivity(intent)
+        }
+    }
+
+    fun requestIconLoad(app: AppModel) {
+        if (app.iconBitmap != null) return
+
+        val key = iconKey(app)
+        viewModelScope.launch {
+            val shouldLoad = iconLoadMutex.withLock {
+                if (inFlightIcons.contains(key)) false else {
+                    inFlightIcons.add(key)
+                    true
+                }
+            }
+
+            if (!shouldLoad) return@launch
+
+            val generation = iconLoadGeneration
+            try {
+                val bitmap = if (app.userHandle != null) {
+                    workProfileManager.loadWorkAppIcon(
+                        packageName = app.packageName,
+                        activityName = app.activityName,
+                        userHandle = app.userHandle
+                    )
+                } else {
+                    appRepository.getAppIcon(
+                        packageName = app.packageName,
+                        activityName = app.activityName,
+                        selectedIconPack = _selectedIconPack.value
+                    )
+                }
+
+                if (bitmap != null && generation == iconLoadGeneration) {
+                    _allApps.value = _allApps.value.map { current ->
+                        if (current.packageName == app.packageName &&
+                            current.activityName == app.activityName &&
+                            current.userHandle == app.userHandle
+                        ) {
+                            current.copy(iconBitmap = bitmap)
+                        } else {
+                            current
+                        }
+                    }
+                }
+            } finally {
+                iconLoadMutex.withLock { inFlightIcons.remove(key) }
+            }
         }
     }
 
@@ -497,6 +543,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun refreshStatus() {
         checkLauncherStatus()
         checkWorkProfile()
+    }
+
+    private fun bumpIconGeneration() {
+        iconLoadGeneration += 1
+    }
+
+    private fun iconKey(app: AppModel): String {
+        val handleId = app.userHandle?.hashCode() ?: 0
+        return "${app.packageName}|${app.activityName}|$handleId"
     }
 
     override fun onCleared() {

@@ -189,6 +189,7 @@ fun LauncherScreen(
                 categoryConfigs = uiState.categoryConfigs,
                 onAppClick = { viewModel.launchApp(it) },
                 onAppLongClick = { viewModel.toggleFavorite(it) },
+                onRequestIcon = { viewModel.requestIconLoad(it) },
                 modifier = Modifier.weight(1f)
             )
         }

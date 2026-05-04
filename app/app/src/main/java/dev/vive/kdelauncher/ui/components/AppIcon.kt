@@ -35,6 +35,7 @@ fun AppIcon(
     app: AppModel,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onRequestIcon: (AppModel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalColors.current
@@ -46,6 +47,10 @@ fun AppIcon(
 
     val imageBitmap = remember(app.packageName, app.profileTag) {
         app.iconBitmap?.asImageBitmap()
+    }
+
+    LaunchedEffect(app.packageName, app.activityName, app.userHandle, app.iconBitmap) {
+        if (app.iconBitmap == null) onRequestIcon(app)
     }
 
     Column(

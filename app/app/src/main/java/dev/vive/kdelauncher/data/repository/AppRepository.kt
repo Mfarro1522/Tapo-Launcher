@@ -1,5 +1,6 @@
 package dev.vive.kdelauncher.data.repository
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -148,6 +149,37 @@ class AppRepository(private val context: Context) {
 
     fun getLaunchIntent(packageName: String): Intent? =
         context.packageManager.getLaunchIntentForPackage(packageName)
+
+    suspend fun getAppIcon(
+        packageName: String,
+        activityName: String,
+        selectedIconPack: String?
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        val cacheKey = "${packageName}|${selectedIconPack ?: ""}"
+        iconCache.get(cacheKey) ?: run {
+            val pm = context.packageManager
+            val bitmap = if (selectedIconPack != null) {
+                iconPackManager.loadIcon(
+                    iconPackPackage = selectedIconPack,
+                    componentPackage = packageName,
+                    activityName = activityName
+                )
+            } else {
+                null
+            } ?: try {
+                val activityInfo = pm.getActivityInfo(
+                    ComponentName(packageName, activityName),
+                    0
+                )
+                activityInfo.loadIcon(pm)?.toBitmap(56, 56)
+            } catch (_: Exception) {
+                null
+            }
+
+            if (bitmap != null) iconCache.put(cacheKey, bitmap)
+            bitmap
+        }
+    }
 
     /**
      * Clear the icon bitmap cache.

@@ -1,4 +1,4 @@
-# KDE-Launcher
+# TAPO-Launcher
 
 ![Demo](pics/AppEnUso.gif)
 

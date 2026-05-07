@@ -1,29 +1,30 @@
 package dev.vive.kdelauncher.ui.tour
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.vive.kdelauncher.ui.theme.LauncherTypography
+import dev.vive.kdelauncher.ui.theme.LocalColors
+import dev.vive.kdelauncher.ui.theme.LocalLauncherAccent
 
 @Composable
 fun TourTooltip(
     step: TourStep,
+    stepIndex: Int,
+    totalSteps: Int,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSkip: () -> Unit,
@@ -31,46 +32,104 @@ fun TourTooltip(
     isLast: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val colors = LocalColors.current
+    val accent = LocalLauncherAccent.current
+    
+    // We use the theme's surface color but a bit more elevated
+    val bgColor = colors.surfaceVariant
+    val onBgColor = colors.onBackground
+    val mutedColor = colors.onSurfaceVariant
+    val primary = accent.primary
+
     Card(
-        modifier = modifier.width(300.dp),
+        modifier = modifier.width(TourDefaults.TooltipWidth),
         shape = RoundedCornerShape(TourDefaults.TooltipCornerRadius),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        colors = CardDefaults.cardColors(containerColor = bgColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = stringResource(id = step.titleRes),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = stringResource(id = step.descriptionRes),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
-            )
-            
+            // Header: Close/Skip
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.End
             ) {
-                TextButton(onClick = onSkip) {
-                    Text("Omitir tour")
+                IconButton(
+                    onClick = onSkip,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Saltar",
+                        tint = mutedColor,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
-                
-                Row {
-                    TextButton(
-                        onClick = onPrevious,
-                        enabled = !isFirst
-                    ) {
-                        Text("Anterior")
+            }
+
+            // Título
+            Text(
+                text = stringResource(id = step.titleRes),
+                style = LauncherTypography.titleLarge,
+                color = onBgColor,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
+            // Descripción
+            Text(
+                text = stringResource(id = step.descriptionRes),
+                style = LauncherTypography.bodyMedium,
+                color = mutedColor,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+
+            // Controles inferiores: Atrás - Dots - Siguiente
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Atrás (Arrow)
+                Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                    if (!isFirst) {
+                        IconButton(
+                            onClick = onPrevious,
+                            colors = IconButtonDefaults.iconButtonColors(contentColor = mutedColor)
+                        ) {
+                            Icon(Icons.Rounded.ArrowBack, contentDescription = "Atrás")
+                        }
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = onNext) {
-                        Text(if (isLast) "¡Entendido!" else "Siguiente")
+                }
+
+                // Indicador de progreso (dots)
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(totalSteps) { index ->
+                        val dotColor = if (index == stepIndex) primary else mutedColor.copy(alpha = 0.3f)
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 3.dp)
+                                .size(if (index == stepIndex) 8.dp else 6.dp)
+                                .background(color = dotColor, shape = CircleShape)
+                        )
                     }
+                }
+
+                // Siguiente / Listo (Arrow/Check)
+                IconButton(
+                    onClick = onNext,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(primary, CircleShape)
+                ) {
+                    Icon(
+                        imageVector = if (isLast) Icons.Rounded.Check else Icons.Rounded.ArrowForward,
+                        contentDescription = if (isLast) "¡Entendido!" else "Siguiente",
+                        tint = colors.background // Contrast against primary
+                    )
                 }
             }
         }

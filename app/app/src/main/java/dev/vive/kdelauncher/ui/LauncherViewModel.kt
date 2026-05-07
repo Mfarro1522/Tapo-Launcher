@@ -592,7 +592,14 @@ class LauncherViewModel(
     }
 
     private fun buildTourSteps(): List<TourStep> {
-        val baseSteps = TourStep.entries.filter { it != TourStep.LABS }.toMutableList()
+        val baseSteps = TourStep.entries.filter { 
+            it != TourStep.LABS && it != TourStep.DEFAULT_LAUNCHER_BANNER 
+        }.toMutableList()
+
+        if (!_isDefaultLauncher.value) {
+            baseSteps.add(1, TourStep.DEFAULT_LAUNCHER_BANNER)
+        }
+
         if (uiState.value.labsEnabled) {
             val finishIndex = baseSteps.indexOf(TourStep.FINISH)
             if (finishIndex != -1) {
@@ -607,6 +614,10 @@ class LauncherViewModel(
     fun nextTourStep() {
         val current = _tourState.value
         if (current.currentStepIndex < current.steps.lastIndex) {
+            val nextStep = current.steps[current.currentStepIndex + 1]
+            if (nextStep == TourStep.LABS) {
+                _showSettings.value = true
+            }
             _tourState.value = current.copy(currentStepIndex = current.currentStepIndex + 1)
         } else {
             dismissProductTour()
@@ -616,6 +627,10 @@ class LauncherViewModel(
     fun previousTourStep() {
         val current = _tourState.value
         if (current.currentStepIndex > 0) {
+            val prevStep = current.steps[current.currentStepIndex - 1]
+            if (current.currentStep() == TourStep.LABS && prevStep != TourStep.LABS) {
+                _showSettings.value = false
+            }
             _tourState.value = current.copy(currentStepIndex = current.currentStepIndex - 1)
         }
     }

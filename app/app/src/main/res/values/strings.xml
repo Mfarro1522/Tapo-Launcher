@@ -21,22 +21,22 @@
     <string name="quick_sound">Sound</string>
     <string name="quick_rotation">Rotate</string>
 
-    <string name="tour_welcome_title">Bienvenido a TAPO-Launcher</string>
-    <string name="tour_welcome_desc">Vamos a dar un rápido paseo por las funciones principales.</string>
-    <string name="tour_banner_title">Launcher predeterminado</string>
-    <string name="tour_banner_desc">Puedes establecer TAPO como tu launcher principal para la mejor experiencia.</string>
+    <string name="tour_welcome_title">Bienvenido a TAPO</string>
+    <string name="tour_welcome_desc">Un paseo rápido por lo esencial.</string>
+    <string name="tour_banner_title">Actívalo</string>
+    <string name="tour_banner_desc">Fíjalo como launcher predeterminado para sacarle todo el partido.</string>
     <string name="tour_profile_title">Perfiles</string>
-    <string name="tour_profile_desc">Cambia rápidamente entre tu perfil Personal y de Trabajo.</string>
+    <string name="tour_profile_desc">Alterna rápido entre Personal y Trabajo desde aquí.</string>
     <string name="tour_settings_title">Ajustes</string>
-    <string name="tour_settings_desc">Toca aquí para personalizar la apariencia y comportamiento.</string>
-    <string name="tour_search_title">Búsqueda rápida</string>
-    <string name="tour_search_desc">Encuentra tus apps al instante usando la barra de búsqueda.</string>
+    <string name="tour_settings_desc">Personaliza apariencia, comportamiento y más.</string>
+    <string name="tour_search_title">Búsqueda</string>
+    <string name="tour_search_desc">Encuentra cualquier app al instante.</string>
     <string name="tour_sidebar_title">Categorías</string>
-    <string name="tour_sidebar_desc">Navega entre diferentes categorías de aplicaciones.</string>
-    <string name="tour_grid_title">Tus aplicaciones</string>
-    <string name="tour_grid_desc">Mantén presionada una app para más opciones o añadirla a favoritos.</string>
+    <string name="tour_sidebar_desc">Filtra apps por grupos como Juegos o Multimedia.</string>
+    <string name="tour_grid_title">Tus apps</string>
+    <string name="tour_grid_desc">Mantén pulsada una app para añadirla a favoritos.</string>
     <string name="tour_labs_title">TAPO Labs</string>
-    <string name="tour_labs_desc">Descubre funciones experimentales con Inteligencia Artificial.</string>
-    <string name="tour_finish_title">¡Todo listo!</string>
-    <string name="tour_finish_desc">Ya puedes empezar a disfrutar de tu nuevo launcher.</string>
+    <string name="tour_labs_desc">Prueba funciones experimentales con IA.</string>
+    <string name="tour_finish_title">¡Listo!</string>
+    <string name="tour_finish_desc">Ya puedes disfrutar de tu launcher.</string>
 </resources>

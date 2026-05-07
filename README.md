@@ -76,7 +76,7 @@ app/
 
 - La **refactorización arquitectónica** ya está completada (Fases 1 a 5).
 - Se implementaron las funcionalidades de **Temas de Color Dev** (Dracula, Tokyo Night, Vercel, Catppuccin, Nord, Gruvbox, One Dark) y **TAPO Labs** (auto-organización experimental de apps con IA a través de Groq, Gemini o Cohere).
-- **NUEVO:** Se implementó exitosamente el **Product Tour** nativo (tutorial interactivo de primer uso) que guía al usuario por las funciones principales de la interfaz, totalmente renderizado sobre el grid de Compose.
+- **NUEVO:** Se implementó exitosamente el **Product Tour** nativo (tutorial interactivo de primer uso) que guía al usuario por las funciones principales de la interfaz. Renderizado totalmente sobre el grid de Compose, cuenta con animaciones cinemáticas fluidas, transiciones de barrido, y soporte total adaptativo para modo claro y oscuro.
 - El proyecto usa un **launcher real** con soporte para Work Profile, icon packs, ajustes visuales, y tematización dinámica.
 - *Nota sobre pruebas:* Siguiendo las reglas del repositorio, el proyecto se mantiene ágil sin la creación activa de suites de tests para las capas de UI experimentales.
 

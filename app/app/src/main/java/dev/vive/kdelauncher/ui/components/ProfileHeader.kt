@@ -37,7 +37,8 @@ fun ProfileHeader(
     showSettingsActive: Boolean,
     hasRealWorkProfile: Boolean = false,
     isWorkProfileLocked: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    settingsModifier: Modifier = Modifier
 ) {
     val accent = LocalLauncherAccent.current
     val colors = LocalColors.current
@@ -110,7 +111,7 @@ fun ProfileHeader(
 
         // Gear icon for settings
         Box(
-            modifier = Modifier
+            modifier = settingsModifier
                 .size(36.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(

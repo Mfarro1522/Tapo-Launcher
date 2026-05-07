@@ -149,8 +149,9 @@ fun LauncherScreen(
             isWorkProfileLocked = uiState.isWorkProfileLocked,
             modifier = Modifier
                 .tourTarget(TourTarget.ProfileHeader, tourState) { t, r -> targetPositions[t] = r }
+                .padding(top = 4.dp, bottom = 8.dp),
+            settingsModifier = Modifier
                 .tourTarget(TourTarget.SettingsButton, tourState) { t, r -> targetPositions[t] = r }
-                .padding(top = 4.dp, bottom = 8.dp)
         )
 
         // Settings panel (collapsible, max 60% screen height)

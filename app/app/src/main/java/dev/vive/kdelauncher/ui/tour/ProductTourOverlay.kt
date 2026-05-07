@@ -11,7 +11,12 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,12 +55,24 @@ fun ProductTourOverlay(
         
         // 2. Highlighter del paso actual
         val currentStep = tourState.currentStep()
-        val targetBounds = currentStep?.let { targetPositions[it.target] }
+        val rawTargetBounds = currentStep?.let { targetPositions[it.target] }
+        
+        var lastKnownBounds by remember { mutableStateOf<Rect?>(null) }
+        if (rawTargetBounds != null) {
+            lastKnownBounds = rawTargetBounds
+        }
+        val targetBounds = if (rawTargetBounds == null && tourState.isActive && currentStep?.target != TourTarget.None) lastKnownBounds else rawTargetBounds
         
         AnimatedVisibility(
             visible = targetBounds != null,
-            enter = fadeIn(tween(TourDefaults.AnimationDuration)),
-            exit = fadeOut(tween(TourDefaults.AnimationDuration))
+            enter = fadeIn(tween(TourDefaults.AnimationDuration)) + androidx.compose.animation.scaleIn(
+                initialScale = 2.0f,
+                animationSpec = tween(TourDefaults.AnimationDuration)
+            ),
+            exit = fadeOut(tween(TourDefaults.AnimationDuration)) + androidx.compose.animation.scaleOut(
+                targetScale = 2.0f,
+                animationSpec = tween(TourDefaults.AnimationDuration)
+            )
         ) {
             TourHighlighter(targetBounds = targetBounds)
         }
@@ -73,32 +90,47 @@ fun ProductTourOverlay(
             val stepTitle = stringResource(id = step.titleRes)
             val stepDesc = stringResource(id = step.descriptionRes)
 
-            val tooltipModifier = if (targetBounds == null) {
-                Modifier.align(Alignment.Center)
-            } else {
-                Modifier.offset { tooltipPosition }
-            }
+            val animatedTooltipPosition by androidx.compose.animation.core.animateIntOffsetAsState(
+                targetValue = tooltipPosition,
+                animationSpec = tween(TourDefaults.AnimationDuration),
+                label = "tooltipOffset"
+            )
+
+            val tooltipModifier = Modifier.offset { animatedTooltipPosition }
 
             AnimatedVisibility(
                 visible = tourState.isActive,
                 enter = fadeIn(tween(TourDefaults.AnimationDuration)) + slideInVertically(
                     animationSpec = tween(TourDefaults.AnimationDuration),
-                    initialOffsetY = { it / 2 }
+                    initialOffsetY = { it / 4 }
                 ),
                 exit = fadeOut(tween(TourDefaults.AnimationDuration)),
                 modifier = tooltipModifier
             ) {
-                TourTooltip(
-                    step = step,
-                    onNext = onNext,
-                    onPrevious = onPrevious,
-                    onSkip = onSkip,
-                    isFirst = tourState.currentStepIndex == 0,
-                    isLast = tourState.currentStepIndex == tourState.steps.lastIndex,
-                    modifier = Modifier.semantics {
-                        contentDescription = "Tutorial de bienvenida. $stepTitle. $stepDesc"
-                    }
-                )
+                AnimatedContent(
+                    targetState = step,
+                    transitionSpec = {
+                        fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                    },
+                    label = "tooltipContent"
+                ) { targetStep ->
+                    val stepTitle = stringResource(id = targetStep.titleRes)
+                    val stepDesc = stringResource(id = targetStep.descriptionRes)
+                    
+                    TourTooltip(
+                        step = targetStep,
+                        stepIndex = tourState.steps.indexOf(targetStep),
+                        totalSteps = tourState.steps.size,
+                        onNext = onNext,
+                        onPrevious = onPrevious,
+                        onSkip = onSkip,
+                        isFirst = tourState.steps.indexOf(targetStep) == 0,
+                        isLast = tourState.steps.indexOf(targetStep) == tourState.steps.lastIndex,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Tutorial de bienvenida. $stepTitle. $stepDesc"
+                        }
+                    )
+                }
             }
         }
     }
@@ -111,33 +143,45 @@ private fun calculateTooltipPosition(
     screenWidth: Int,
     screenHeight: Int
 ): IntOffset {
-    if (targetBounds == null) return IntOffset.Zero
-
     with(density) {
         val screenWidthPx = screenWidth.dp.roundToPx()
         val screenHeightPx = screenHeight.dp.roundToPx()
         val marginPx = 16.dp.roundToPx()
-        val tooltipWidthPx = 300.dp.roundToPx()
+        val tooltipWidthPx = TourDefaults.TooltipWidth.roundToPx()
+        val gapPx = 16.dp.roundToPx()
+        val tooltipHeightEstimate = 260.dp.roundToPx() // Promedio para centrar
+        
+        if (targetBounds == null || step.target == TourTarget.None) {
+            val x = (screenWidthPx - tooltipWidthPx) / 2
+            val y = (screenHeightPx - tooltipHeightEstimate) / 2
+            return IntOffset(x, y)
+        }
         
         return when (step.target) {
             is TourTarget.Banner, is TourTarget.ProfileHeader, is TourTarget.SearchBar -> {
-                IntOffset(marginPx, targetBounds.bottom.toInt() + marginPx)
+                val x = ((screenWidthPx - tooltipWidthPx) / 2).coerceIn(marginPx, screenWidthPx - tooltipWidthPx - marginPx)
+                val y = (targetBounds.bottom.toInt() + gapPx).coerceAtMost(screenHeightPx - tooltipHeightEstimate)
+                IntOffset(x, y)
             }
             is TourTarget.SettingsButton -> {
-                // Ensure it doesn't go out of left bound
                 val x = (targetBounds.left.toInt() - tooltipWidthPx - marginPx).coerceAtLeast(marginPx)
-                IntOffset(x, targetBounds.top.toInt())
+                val y = targetBounds.top.toInt().coerceAtMost(screenHeightPx - tooltipHeightEstimate)
+                IntOffset(x, y)
             }
             is TourTarget.CategorySidebar -> {
-                IntOffset(targetBounds.right.toInt() + marginPx, targetBounds.top.toInt())
+                val x = (targetBounds.right.toInt() + gapPx).coerceAtMost(screenWidthPx - tooltipWidthPx - marginPx)
+                val y = targetBounds.top.toInt().coerceAtMost(screenHeightPx - tooltipHeightEstimate)
+                IntOffset(x, y)
             }
             is TourTarget.AppGrid -> {
-                IntOffset(marginPx, targetBounds.top.toInt() + marginPx)
+                val x = ((screenWidthPx - tooltipWidthPx) / 2).coerceIn(marginPx, screenWidthPx - tooltipWidthPx - marginPx)
+                val y = (targetBounds.top.toInt() + gapPx).coerceAtMost(screenHeightPx - tooltipHeightEstimate)
+                IntOffset(x, y)
             }
             is TourTarget.Labs -> {
-                // Ensure it doesn't go out of top bound
-                val y = (targetBounds.top.toInt() - 200.dp.roundToPx()).coerceAtLeast(marginPx)
-                IntOffset(marginPx, y)
+                val y = (targetBounds.top.toInt() - gapPx - tooltipHeightEstimate).coerceAtLeast(marginPx)
+                val x = ((screenWidthPx - tooltipWidthPx) / 2).coerceIn(marginPx, screenWidthPx - tooltipWidthPx - marginPx)
+                IntOffset(x, y)
             }
             else -> IntOffset.Zero
         }

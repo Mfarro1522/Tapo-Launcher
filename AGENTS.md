@@ -1,8 +1,6 @@
 # AGENTS.md — TAPO-Launcher
 
 > Android launcher app built with Kotlin + Jetpack Compose. Single module, no tests.
->
-> **Antes de hacer cambios lee PRODUCT_TOUR_PLAN.md**- es la implementacion mas actual y esta en progreso leela para entender el estado actual del proyecto y las tareas pendientes.
 
 ## Project structure
 

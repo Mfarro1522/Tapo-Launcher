@@ -94,7 +94,7 @@ class AppCategorizerTest : FunSpec({
         }
     }
 
-    context("regression: known conflict cases from REPORT.md") {
+    context("regression: known conflict cases") {
         test("Google Play Store (com.android.vending) is resolved by exact allowlist") {
             AppCategorizer.categorize("com.android.vending", -1) shouldBe AppCategory.INTERNET
         }

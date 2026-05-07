@@ -1,6 +1,6 @@
 # Contexto Histórico y Deuda Técnica (MORE CONTEXT)
 
-> Este documento unifica y reemplaza los antiguos reportes de estado (`REPORT.md` y `REFACTOR_CHECKLIST.md`). Resume exclusivamente la evolución técnica del código fuente sin repetir las características de producto ya documentadas en el `README.md`.
+> Este documento consolida la historia técnica y estado actual del código fuente, complementando las características funcionales que ya están documentadas en el `README.md`.
 
 ## 1. ¿Cómo estaba antes? (Deuda Técnica Identificada)
 
@@ -59,3 +59,10 @@ Se añadió un tutorial interactivo (Product Tour) diseñado de forma 100% nativ
 - **Gestión de Estado:** La capa de persistencia se resolvió añadiendo `productTourCompleted` al `DataStore` (vía `SettingsManager`). Se añadieron UseCases específicos para consultar y modificar este estado.
 - **Componentes Puros:** La UI del tutorial (`TourTooltip`, `TourHighlighter`, `ProductTourOverlay`) reside en el paquete `ui/tour/` como componentes "puros" que reciben el estado del ViewModel y pintan el overlay respectivo con soporte de accesibilidad (TalkBack).
 - **Modifier Extension (`Modifier.tourTarget`):** Para posicionar el tutorial dinámicamente sobre elementos existentes (SearchBar, SettingsButton, etc.) sin inyectar código pesado en la UI base, se creó un `Modifier` especial que extrae sus coordenadas en pantalla (`onGloballyPositioned`) única y exclusivamente cuando el tour está activo para ese paso, cacheando dichas medidas eficientemente.
+
+### Rediseño y Pulido Final (Product Tour & Labs)
+Para asegurar una experiencia de primer nivel ("premium"), se implementaron las siguientes mejoras finales en el Product Tour:
+- **Transiciones y Barridos (Sweep):** El tooltip del tour calcula el centro de la pantalla para realizar transiciones fluidas de entrada y salida ("barridos"). El uso de `AnimatedContent` asegura un *crossfade* elegante del texto sin parpadeos rápidos, y el estado de la posición utiliza `lastKnownBounds` para evitar que la interfaz pierda el foco al cambiar de pasos de forma acelerada.
+- **Efectos Cinemáticos:** El highlighter que enfoca los elementos de la interfaz ahora cuenta con animaciones de escala (`scaleIn` y `scaleOut`), creando un efecto dinámico de encendido y apagado de foco.
+- **Soporte de Temas (Light/Dark):** La tarjeta del tooltip se desvinculó de colores oscuros estáticos y ahora utiliza nativamente los tokens del sistema de diseño (`surfaceVariant`), adaptándose perfectamente al tema blanco y oscuro.
+- **Flujo de Privacidad (TAPO Labs):** Se estabilizó el paso experimental en el Tour, integrando un diálogo de consentimiento explícito de privacidad previo al envío de datos de apps hacia APIs de LLM.

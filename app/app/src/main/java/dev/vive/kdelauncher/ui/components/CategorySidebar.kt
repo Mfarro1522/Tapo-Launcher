@@ -24,10 +24,10 @@ import dev.vive.kdelauncher.ui.theme.LocalLauncherAccent
 
 @Composable
 fun CategorySidebar(
-    activeCategory: AppCategory,
-    visibleCategories: List<AppCategory>,
+    activeCategory: String,
+    visibleCategories: List<String>,
     categoryConfigs: List<CategoryConfig>,
-    onCategorySelected: (AppCategory) -> Unit,
+    onCategorySelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val accent = LocalLauncherAccent.current
@@ -44,7 +44,7 @@ fun CategorySidebar(
         visibleCategories.forEach { category ->
             val isActive = category == activeCategory
             val config = categoryConfigs.find { it.category == category }
-            val iconName = config?.iconName ?: "GridView"
+            val iconName = config?.iconName ?: AppCategory.defaultIcon(category)
 
             val bgColor by animateColorAsState(
                 if (isActive) accent.primary.copy(alpha = 0.15f) else Color.Transparent,
@@ -86,7 +86,7 @@ fun CategorySidebar(
                 ) {
                     Icon(
                         imageVector = IconResolver.resolve(iconName),
-                        contentDescription = config?.displayName ?: category.displayName,
+                        contentDescription = config?.displayName ?: AppCategory.displayName(category),
                         modifier = Modifier.size(18.dp),
                         tint = iconColor
                     )

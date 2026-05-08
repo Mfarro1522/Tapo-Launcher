@@ -12,7 +12,8 @@ data class InstalledLauncherApp(
     val packageName: String,
     val activityName: String,
     val label: String,
-    val androidCategory: Int
+    val androidCategory: Int,
+    val versionCode: Long
 )
 
 interface AppPlatformGateway {
@@ -50,11 +51,23 @@ class AndroidAppPlatformGateway(
             }
             .map { resolveInfo ->
                 val activityInfo = resolveInfo.activityInfo
+                val versionCode = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        pm.getPackageInfo(activityInfo.packageName, 0).longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pm.getPackageInfo(activityInfo.packageName, 0).versionCode.toLong()
+                    }
+                } catch (e: Exception) {
+                    0L
+                }
+                
                 InstalledLauncherApp(
                     packageName = activityInfo.packageName,
                     activityName = activityInfo.name,
                     label = resolveInfo.loadLabel(pm).toString(),
-                    androidCategory = activityInfo.applicationInfo?.category ?: -1
+                    androidCategory = activityInfo.applicationInfo?.category ?: -1,
+                    versionCode = versionCode
                 )
             }
     }

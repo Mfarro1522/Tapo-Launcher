@@ -33,17 +33,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.vive.kdelauncher.data.IconPackInfo
-import dev.vive.kdelauncher.data.model.AppCategory
+
 import dev.vive.kdelauncher.ui.components.IconSize
 import dev.vive.kdelauncher.ui.theme.LocalColors
 import dev.vive.kdelauncher.ui.theme.LocalLauncherAccent
 import dev.vive.kdelauncher.ui.theme.LauncherTypography
+import java.util.Collections
 
 /**
  * Data representing a category's current display configuration.
  */
 data class CategoryConfig(
-    val category: AppCategory,
+    val category: String,
     val displayName: String,
     val iconName: String,
     val isHidden: Boolean,
@@ -61,11 +62,12 @@ fun LauncherSettingsPanel(
     showIconBackground: Boolean,
     gridColumns: Int,
     categoryConfigs: List<CategoryConfig>,
+    appCounts: Map<String, Int>,
     installedIconPacks: List<IconPackInfo>,
     selectedIconPack: String?,
     isLoadingIconPacks: Boolean,
     labsEnabled: Boolean,
-    aiProvider: dev.vive.kdelauncher.data.model.AiProvider,
+    aiProvider: dev.vive.kdelauncher.data.model.AiProviderType,
     aiConnectionState: dev.vive.kdelauncher.ui.AiConnectionState,
     aiModel: String,
     organizationState: dev.vive.kdelauncher.ui.OrganizationState,
@@ -75,17 +77,19 @@ fun LauncherSettingsPanel(
     onIconSizeChange: (IconSize) -> Unit,
     onIconBackgroundToggle: () -> Unit,
     onGridColumnsChange: (Int) -> Unit,
-    onCategoryRename: (AppCategory, String) -> Unit,
-    onCategoryIconChange: (AppCategory, String) -> Unit,
-    onCategoryToggleHidden: (AppCategory) -> Unit,
+    onCategoryRename: (String, String) -> Unit,
+    onCategoryIconChange: (String, String) -> Unit,
+    onCategoryToggleHidden: (String) -> Unit,
+    onDeleteCategory: (String, Int) -> Unit,
+    onCategoryOrderChange: (List<String>) -> Unit,
     onSelectIconPack: (String?) -> Unit,
     onReset: () -> Unit,
     onToggleLabs: (Boolean) -> Unit,
-    onConnectAi: (dev.vive.kdelauncher.data.model.AiProvider, String) -> Unit,
+    onConnectAi: (dev.vive.kdelauncher.data.model.AiProviderType, String) -> Unit,
     onDisconnectAi: () -> Unit,
     onSetAiModel: (String) -> Unit,
     onOrganizeApps: () -> Unit,
-    onApplySuggestions: (List<dev.vive.kdelauncher.data.model.CategorySuggestion>) -> Unit,
+    onApplySuggestions: (List<dev.vive.kdelauncher.data.model.AppCategorization>) -> Unit,
     onCancelOrganization: () -> Unit,
     onResetTour: () -> Unit,
     modifier: Modifier = Modifier
@@ -521,15 +525,43 @@ fun LauncherSettingsPanel(
         HorizontalDivider(color = colors.border.copy(alpha = 0.4f))
 
         // ── Categories ───────────────────────────────────
-        SectionLabel("Categorías  •  toca el ícono o el nombre para editar")
+        SectionLabel("Categorías  •  flechas para reorderar")
+
+        val orderedConfigs = remember { mutableStateListOf(*categoryConfigs.toTypedArray()) }
+
+        LaunchedEffect(categoryConfigs) {
+            orderedConfigs.clear()
+            orderedConfigs.addAll(categoryConfigs)
+        }
 
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            categoryConfigs.forEach { config ->
+            orderedConfigs.forEachIndexed { index, config ->
+                val count = appCounts[config.category] ?: 0
+                val isAll = config.category == dev.vive.kdelauncher.data.model.AppCategory.ALL
+                val isFav = config.category == dev.vive.kdelauncher.data.model.AppCategory.FAVORITES
                 CategorySettingsRow(
                     config = config,
+                    appCount = count,
                     onRename = { onCategoryRename(config.category, it) },
                     onIconChange = { onCategoryIconChange(config.category, it) },
                     onToggleHidden = { onCategoryToggleHidden(config.category) },
+                    onDelete = { onDeleteCategory(config.category, count) },
+                    onMoveUp = {
+                        if (index > 0) {
+                            Collections.swap(orderedConfigs, index, index - 1)
+                            onCategoryOrderChange(orderedConfigs.map { it.category })
+                        }
+                    },
+                    onMoveDown = {
+                        if (index < orderedConfigs.lastIndex) {
+                            Collections.swap(orderedConfigs, index, index + 1)
+                            onCategoryOrderChange(orderedConfigs.map { it.category })
+                        }
+                    },
+                    isHideProtected = isAll,
+                    isDeleteProtected = isAll || isFav,
+                    isFirst = index == 0,
+                    isLast = index == orderedConfigs.lastIndex,
                 )
             }
         }
@@ -741,14 +773,23 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun CategorySettingsRow(
     config: CategoryConfig,
+    appCount: Int,
     onRename: (String) -> Unit,
     onIconChange: (String) -> Unit,
     onToggleHidden: () -> Unit,
+    onDelete: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    isHideProtected: Boolean = false,
+    isDeleteProtected: Boolean = false,
+    isFirst: Boolean = false,
+    isLast: Boolean = false,
 ) {
     val colors = LocalColors.current
     val accent = LocalLauncherAccent.current
     var showIconPicker by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     val contentAlpha = if (config.isHidden) 0.38f else 1f
 
@@ -812,9 +853,40 @@ private fun CategorySettingsRow(
                 )
             }
 
+            // ── Up/Down reorder ───────────────────────────
+            Column {
+                IconButton(
+                    onClick = onMoveUp,
+                    enabled = !isFirst,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowUp,
+                        contentDescription = "Mover arriba",
+                        modifier = Modifier.size(16.dp),
+                        tint = if (isFirst) colors.onSurfaceVariant.copy(0.2f)
+                        else colors.onSurfaceVariant.copy(0.5f)
+                    )
+                }
+                IconButton(
+                    onClick = onMoveDown,
+                    enabled = !isLast,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Mover abajo",
+                        modifier = Modifier.size(16.dp),
+                        tint = if (isLast) colors.onSurfaceVariant.copy(0.2f)
+                        else colors.onSurfaceVariant.copy(0.5f)
+                    )
+                }
+            }
+
             // ── Visibility toggle ─────────────────────────────
             IconButton(
                 onClick = onToggleHidden,
+                enabled = !isHideProtected,
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
@@ -825,6 +897,21 @@ private fun CategorySettingsRow(
                     tint = if (config.isHidden) colors.onSurfaceVariant.copy(0.4f)
                     else accent.primary.copy(alpha = 0.7f)
                 )
+            }
+
+            // ── Delete button ──────────────────────────────
+            if (!isDeleteProtected) {
+                IconButton(
+                    onClick = { showDeleteDialog = true },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteOutline,
+                        contentDescription = "Eliminar categoría",
+                        modifier = Modifier.size(18.dp),
+                        tint = colors.onSurfaceVariant.copy(0.5f)
+                    )
+                }
             }
         }
 
@@ -926,6 +1013,32 @@ private fun CategorySettingsRow(
             },
             dismissButton = {
                 TextButton(onClick = { showRenameDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    // ── Delete confirmation dialog ─────────────────────────
+    if (showDeleteDialog) {
+        val isFavorites = config.category == dev.vive.kdelauncher.data.model.AppCategory.FAVORITES
+        val message = if (appCount == 0) {
+            "Eliminar la categoría «${config.displayName}»?"
+        } else if (isFavorites) {
+            "«${config.displayName}» tiene $appCount app${if (appCount == 1) "" else "s"}. Eliminar la categoría? Las apps se moverán a «Todas»."
+        } else {
+            "«${config.displayName}» tiene $appCount app${if (appCount == 1) "" else "s"}. Las apps se moverán a «Todas». Deseas eliminar esta categoría?"
+        }
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("¿Eliminar categoría?") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete()
+                    showDeleteDialog = false
+                }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancelar") }
             }
         )
     }

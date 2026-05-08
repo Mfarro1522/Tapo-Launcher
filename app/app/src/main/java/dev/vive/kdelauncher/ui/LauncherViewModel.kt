@@ -51,7 +51,7 @@ sealed class AiConnectionState {
 sealed class OrganizationState {
     object Idle : OrganizationState()
     object Loading : OrganizationState()
-    data class Preview(val suggestions: List<dev.vive.kdelauncher.data.model.CategorySuggestion>) : OrganizationState()
+    data class Preview(val result: dev.vive.kdelauncher.domain.usecase.OrganizationResult) : OrganizationState()
     object Applied : OrganizationState()
 }
 
@@ -62,16 +62,16 @@ data class LauncherUiState(
     val allApps: List<AppModel> = emptyList(),
     val filteredApps: List<AppModel> = emptyList(),
     val searchQuery: String = "",
-    val activeCategory: AppCategory = AppCategory.FAVORITES,
+    val activeCategory: String = AppCategory.FAVORITES,
     val currentProfile: Profile = Profile.Personal,
     val isDarkTheme: Boolean = true,
     val colorTheme: dev.vive.kdelauncher.data.model.ColorTheme = dev.vive.kdelauncher.data.model.ColorTheme.SYSTEM,
     val showAppLabels: Boolean = true,
     val showSettings: Boolean = false,
     val isLoading: Boolean = true,
-    val appCounts: Map<AppCategory, Int> = emptyMap(),
+    val appCounts: Map<String, Int> = emptyMap(),
     val categoryConfigs: List<CategoryConfig> = emptyList(),
-    val visibleCategories: List<AppCategory> = AppCategory.entries,
+    val visibleCategories: List<String> = AppCategory.FIXED,
     val iconSize: IconSize = IconSize.MEDIUM,
     val showIconBackground: Boolean = true,
     val gridColumns: Int = 3,
@@ -82,7 +82,7 @@ data class LauncherUiState(
     val hasRealWorkProfile: Boolean = false,
     val isWorkProfileLocked: Boolean = false,
     val labsEnabled: Boolean = false,
-    val aiProvider: dev.vive.kdelauncher.data.model.AiProvider = dev.vive.kdelauncher.data.model.AiProvider.GROQ,
+    val aiProvider: dev.vive.kdelauncher.data.model.AiProviderType = dev.vive.kdelauncher.data.model.AiProviderType.GROQ,
     val aiConnectionState: AiConnectionState = AiConnectionState.Idle,
     val aiModel: String = "",
     val organizationState: OrganizationState = OrganizationState.Idle,
@@ -105,8 +105,9 @@ class LauncherViewModel(
     private val openSetDefaultLauncherUseCase: OpenSetDefaultLauncherUseCase,
     private val openAppInfoUseCase: OpenAppInfoUseCase,
     private val uninstallAppUseCase: UninstallAppUseCase,
-    private val connectAiProviderUseCase: dev.vive.kdelauncher.domain.usecase.ConnectAiProviderUseCase,
+    private val connectAiProviderTypeUseCase: dev.vive.kdelauncher.domain.usecase.ConnectAiProviderTypeUseCase,
     private val organizeAppsWithAiUseCase: dev.vive.kdelauncher.domain.usecase.OrganizeAppsWithAiUseCase,
+    private val categoryCache: dev.vive.kdelauncher.data.repository.CategoryCache,
     private val checkProductTourStatusUseCase: CheckProductTourStatusUseCase,
     private val dismissProductTourUseCase: DismissProductTourUseCase,
 ) : AndroidViewModel(application) {
@@ -137,22 +138,30 @@ class LauncherViewModel(
 
     // ── Derived flows from reactive repositories ─────────────────────────────
     private val categoryConfigsFlow = combine(
+        _allApps,
         settingsManager.hiddenCategories,
         settingsManager.categoryDisplayNames,
-        settingsManager.categoryIconNames
-    ) { hidden, displayNames, iconNames ->
-        AppCategory.entries.map { cat ->
+        settingsManager.categoryIconNames,
+        settingsManager.categoryOrder
+    ) { apps, hidden, displayNames, iconNames, order ->
+        val presentCategories = apps.map { it.category }.toSortedSet()
+        val allCategories = (presentCategories + AppCategory.FIXED).toSortedSet()
+        val sortedCategories = allCategories.sortedBy { cat ->
+            val idx = order.indexOf(cat)
+            if (idx >= 0) idx else Int.MAX_VALUE
+        }
+        sortedCategories.map { cat ->
             CategoryConfig(
                 category = cat,
-                displayName = displayNames[cat] ?: cat.displayName,
-                iconName = iconNames[cat] ?: "Star",
-                isHidden = cat.name in hidden
+                displayName = displayNames[cat] ?: AppCategory.displayName(cat),
+                iconName = iconNames[cat] ?: AppCategory.defaultIcon(cat),
+                isHidden = cat in hidden
             )
         }
     }
 
-    private val visibleCategoriesFlow = settingsManager.hiddenCategories.map { hidden ->
-        AppCategory.entries.filter { it.name !in hidden }
+    private val visibleCategoriesFlow = categoryConfigsFlow.map { configs ->
+        configs.filter { !it.isHidden }.map { it.category }
     }
 
     private val appInput = combine(_allApps, _searchQuery, _activeCategory) { apps, q, cat ->
@@ -234,8 +243,8 @@ class LauncherViewModel(
         _aiConnectionState,
         _organizationState
     ) { enabled, providerStr, model, connState, orgState ->
-        val provider = runCatching { dev.vive.kdelauncher.data.model.AiProvider.valueOf(providerStr.uppercase()) }
-            .getOrDefault(dev.vive.kdelauncher.data.model.AiProvider.GROQ)
+        val provider = runCatching { dev.vive.kdelauncher.data.model.AiProviderType.valueOf(providerStr.uppercase()) }
+            .getOrDefault(dev.vive.kdelauncher.data.model.AiProviderType.GROQ)
         LauncherAiInput(enabled, provider, model, connState, orgState)
     }
 
@@ -308,7 +317,12 @@ class LauncherViewModel(
                 _isLoading.value = true
                 val selectedPack = settingsManager.selectedIconPack.first()
                 val (_, fullApps) = loadAppsUseCase(selectedPack)
-                _allApps.value = fullApps
+                val fixedSet = AppCategory.FIXED.toSet()
+                _allApps.value = fullApps.map { app ->
+                    if (app.category in fixedSet) app
+                    else app.copy(category = AppCategory.ALL)
+                }
+                categoryCache.purge(_allApps.value.map { it.packageName to it.versionCode })
             } catch (e: Exception) {
                 e.printStackTrace()
                 _allApps.value = emptyList()
@@ -343,7 +357,7 @@ class LauncherViewModel(
 
     fun setSearchQuery(query: String) { _searchQuery.value = query }
 
-    fun setActiveCategory(category: AppCategory) {
+    fun setActiveCategory(category: String) {
         _activeCategory.value = category
         _searchQuery.value = ""
     }
@@ -402,24 +416,48 @@ class LauncherViewModel(
         viewModelScope.launch { settingsManager.setGridColumns(columns) }
     }
 
-    fun setCategoryDisplayName(category: AppCategory, name: String) {
+    fun setCategoryDisplayName(category: String, name: String) {
         viewModelScope.launch { settingsManager.setCategoryDisplayName(category, name) }
     }
 
-    fun setCategoryIconName(category: AppCategory, iconName: String) {
+    fun setCategoryIconName(category: String, iconName: String) {
         viewModelScope.launch { settingsManager.setCategoryIconName(category, iconName) }
     }
 
-    fun toggleCategoryHidden(category: AppCategory) {
+    fun toggleCategoryHidden(category: String) {
         viewModelScope.launch {
-            val hidden = settingsManager.hiddenCategories.first().contains(category.name)
+            val hidden = settingsManager.hiddenCategories.first().contains(category)
             settingsManager.setCategoryHidden(category, !hidden)
+        }
+    }
+
+    fun setCategoryOrder(order: List<String>) {
+        viewModelScope.launch { settingsManager.setCategoryOrder(order) }
+    }
+
+    fun deleteCategory(category: String, appCount: Int) {
+        viewModelScope.launch {
+            _allApps.value = _allApps.value.map { app ->
+                if (app.category == category) app.copy(category = AppCategory.ALL) else app
+            }
+            settingsManager.setCategoryHidden(category, true)
+            if (_activeCategory.value == category) {
+                _activeCategory.value = AppCategory.ALL
+            }
         }
     }
 
     fun resetSettings() {
         viewModelScope.launch {
+            _allApps.value = emptyList()
+            _activeCategory.value = AppCategory.FAVORITES
+            _searchQuery.value = ""
+            _showSettings.value = false
             settingsManager.resetAll()
+            categoryCache.clearAll()
+            AppCategory.FIXED.forEach { cat ->
+                settingsManager.setCategoryHidden(cat, false)
+            }
             appRepository.clearIconPackCache()
             refreshApps()
         }
@@ -433,7 +471,7 @@ class LauncherViewModel(
         }
     }
 
-    fun setCategoryOverride(app: AppModel, category: AppCategory) {
+    fun setCategoryOverride(app: AppModel, category: String) {
         viewModelScope.launch {
             val isWorkApp = app.userHandle != null || app.profileTag == ProfileType.WORK
             val key = categoryOverrideKey(app, isWorkApp)
@@ -507,17 +545,19 @@ class LauncherViewModel(
         }
     }
 
-    fun connectAiProvider(provider: dev.vive.kdelauncher.data.model.AiProvider, apiKey: String) {
+    fun connectAiProviderType(provider: dev.vive.kdelauncher.data.model.AiProviderType, apiKey: String) {
         viewModelScope.launch {
             _aiConnectionState.value = AiConnectionState.Loading
-            settingsManager.setAiProvider(provider.name)
+            settingsManager.setAiProviderType(provider.name)
             settingsManager.setAiApiKey(apiKey)
 
-            val result = connectAiProviderUseCase(provider, apiKey)
+            val result = connectAiProviderTypeUseCase(provider, apiKey)
             result.onSuccess { models ->
                 _aiConnectionState.value = AiConnectionState.Connected(models)
                 if (models.isNotEmpty()) {
                     settingsManager.setAiModel(models.first())
+                } else {
+                    settingsManager.setAiModel("")
                 }
             }.onFailure { error ->
                 _aiConnectionState.value = AiConnectionState.Error(error.message ?: "Error desconocido")
@@ -526,7 +566,7 @@ class LauncherViewModel(
         }
     }
 
-    fun disconnectAiProvider() {
+    fun disconnectAiProviderType() {
         viewModelScope.launch {
             settingsManager.clearAiApiKey()
             _aiConnectionState.value = AiConnectionState.Idle
@@ -543,34 +583,52 @@ class LauncherViewModel(
     fun organizeAppsWithAi() {
         viewModelScope.launch {
             _organizationState.value = OrganizationState.Loading
-            val providerStr = settingsManager.aiProvider.first()
-            val apiKey = settingsManager.aiApiKey.first()
-            val model = settingsManager.aiModel.first()
+            try {
+                val providerStr = settingsManager.aiProvider.first()
+                val apiKey = settingsManager.aiApiKey.first()
+                val model = settingsManager.aiModel.first()
 
-            val provider = runCatching { dev.vive.kdelauncher.data.model.AiProvider.valueOf(providerStr) }
-                .getOrDefault(dev.vive.kdelauncher.data.model.AiProvider.GROQ)
+                val providerType = runCatching { dev.vive.kdelauncher.data.model.AiProviderType.valueOf(providerStr.uppercase()) }
+                    .getOrDefault(dev.vive.kdelauncher.data.model.AiProviderType.GROQ)
 
-            val apps = _allApps.value
-            val categories = dev.vive.kdelauncher.data.model.AppCategory.entries
+                val provider = when (providerType) {
+                    dev.vive.kdelauncher.data.model.AiProviderType.GROQ -> dev.vive.kdelauncher.data.provider.GroqProvider(apiKey, model.ifBlank { "llama-3.3-70b-versatile" })
+                    dev.vive.kdelauncher.data.model.AiProviderType.GEMINI -> dev.vive.kdelauncher.data.provider.GeminiProvider(apiKey, model.ifBlank { "gemini-2.5-flash-lite-preview-06-17" })
+                    dev.vive.kdelauncher.data.model.AiProviderType.OPENROUTER -> dev.vive.kdelauncher.data.provider.OpenRouterProvider(apiKey, model.ifBlank { "nvidia/nemotron-3-super-120b-a12b:free" })
+                }
 
-            val result = organizeAppsWithAiUseCase(apps, categories, provider, apiKey, model)
-            result.onSuccess { suggestions ->
-                _organizationState.value = OrganizationState.Preview(suggestions)
-            }.onFailure {
+                val apps = _allApps.value
+                val result = organizeAppsWithAiUseCase(apps, provider, useCache = false)
+                _organizationState.value = OrganizationState.Preview(result)
+            } catch (e: Exception) {
                 _organizationState.value = OrganizationState.Idle
+                _aiConnectionState.value = AiConnectionState.Error(e.message ?: "No se pudo organizar con IA")
             }
         }
     }
 
-    fun applyAiSuggestions(selected: List<dev.vive.kdelauncher.data.model.CategorySuggestion>) {
+    fun applyAiSuggestions(selected: List<dev.vive.kdelauncher.data.model.AppCategorization>) {
         viewModelScope.launch {
             _organizationState.value = OrganizationState.Loading
+
+            profileManager.clearFavorites(Profile.Personal)
+            profileManager.clearFavorites(Profile.Work)
+            settingsManager.clearAllCategoryOverrides()
+            settingsManager.resetCategoryPresentation()
+            categoryCache.clearAll()
+
+            AppCategory.FIXED.forEach { category ->
+                settingsManager.setCategoryHidden(category, false)
+            }
+            settingsManager.setCategoryOrder(AppCategory.FIXED)
+            _activeCategory.value = AppCategory.ALL
+
             selected.forEach { suggestion ->
                 val app = _allApps.value.find { it.packageName == suggestion.packageName }
                 if (app != null) {
                     val isWorkApp = app.userHandle != null || app.profileTag == ProfileType.WORK
                     val key = categoryOverrideKey(app, isWorkApp)
-                    setCategoryOverrideUseCase(key, suggestion.suggestedCategory)
+                    setCategoryOverrideUseCase(key, suggestion.categoryId)
                 }
             }
             _organizationState.value = OrganizationState.Applied
@@ -592,8 +650,8 @@ class LauncherViewModel(
     }
 
     private fun buildTourSteps(): List<TourStep> {
-        val baseSteps = TourStep.entries.filter { 
-            it != TourStep.LABS && it != TourStep.DEFAULT_LAUNCHER_BANNER 
+        val baseSteps = TourStep.entries.filter {
+            it != TourStep.LABS && it != TourStep.DEFAULT_LAUNCHER_BANNER
         }.toMutableList()
 
         if (!_isDefaultLauncher.value) {
@@ -670,8 +728,9 @@ class LauncherViewModel(
                 openSetDefaultLauncherUseCase = container.openSetDefaultLauncherUseCase,
                 openAppInfoUseCase = container.openAppInfoUseCase,
                 uninstallAppUseCase = container.uninstallAppUseCase,
-                connectAiProviderUseCase = container.connectAiProviderUseCase,
+                connectAiProviderTypeUseCase = container.connectAiProviderTypeUseCase,
                 organizeAppsWithAiUseCase = container.organizeAppsWithAiUseCase,
+                categoryCache = container.categoryCache,
                 checkProductTourStatusUseCase = container.checkProductTourStatusUseCase,
                 dismissProductTourUseCase = container.dismissProductTourUseCase,
             ) as T

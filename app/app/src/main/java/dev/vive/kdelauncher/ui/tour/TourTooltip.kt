@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Check
@@ -97,7 +99,7 @@ fun TourTooltip(
                             onClick = onPrevious,
                             colors = IconButtonDefaults.iconButtonColors(contentColor = mutedColor)
                         ) {
-                            Icon(Icons.Rounded.ArrowBack, contentDescription = "Atrás")
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Atrás")
                         }
                     }
                 }
@@ -126,7 +128,7 @@ fun TourTooltip(
                         .background(primary, CircleShape)
                 ) {
                     Icon(
-                        imageVector = if (isLast) Icons.Rounded.Check else Icons.Rounded.ArrowForward,
+                        imageVector = if (isLast) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
                         contentDescription = if (isLast) "¡Entendido!" else "Siguiente",
                         tint = colors.background // Contrast against primary
                     )

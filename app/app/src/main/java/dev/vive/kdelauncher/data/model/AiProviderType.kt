@@ -1,6 +1,6 @@
 package dev.vive.kdelauncher.data.model
 
-enum class AiProvider(
+enum class AiProviderType(
     val displayName: String,
     val baseUrl: String,
     val freeModels: List<String>,
@@ -21,11 +21,11 @@ enum class AiProvider(
         "https://aistudio.google.com/app/apikey", 
         "Free tier generoso, sin tarjeta"
     ),
-    COHERE(
-        "Cohere", 
-        "https://api.cohere.com/v2",
-        listOf("command-r", "command-r-plus"),
-        "https://dashboard.cohere.com/api-keys", 
-        "1 000 req/mes gratis"
+    OPENROUTER(
+        "OpenRouter", 
+        "https://openrouter.ai/api/v1",
+        listOf("nvidia/llama-3.1-nemotron-70b-instruct:free", "google/gemini-2.5-flash:free", "meta-llama/llama-3.3-70b-instruct:free"),
+        "https://openrouter.ai/keys", 
+        "Modelos con ':free' al final sin costo"
     ),
 }

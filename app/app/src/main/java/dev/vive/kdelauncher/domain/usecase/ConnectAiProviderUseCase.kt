@@ -1,24 +1,24 @@
 package dev.vive.kdelauncher.domain.usecase
 
-import dev.vive.kdelauncher.data.model.AiProvider
+import dev.vive.kdelauncher.data.model.AiProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-class ConnectAiProviderUseCase {
+class ConnectAiProviderTypeUseCase {
 
-    suspend operator fun invoke(provider: AiProvider, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
+    suspend operator fun invoke(provider: AiProviderType, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
         try {
             if (apiKey.isBlank()) {
                 return@withContext Result.failure(IllegalArgumentException("API Key cannot be blank"))
             }
 
             val urlString = when (provider) {
-                AiProvider.GROQ -> "${provider.baseUrl}/models"
-                AiProvider.GEMINI -> "${provider.baseUrl}/models?key=$apiKey"
-                AiProvider.COHERE -> "${provider.baseUrl}/models"
+                AiProviderType.GROQ -> "${provider.baseUrl}/models"
+                AiProviderType.GEMINI -> "${provider.baseUrl}/models?key=$apiKey"
+                AiProviderType.OPENROUTER -> "${provider.baseUrl}/models"
             }
 
             val url = URL(urlString)
@@ -27,8 +27,13 @@ class ConnectAiProviderUseCase {
             connection.connectTimeout = 5000
             connection.readTimeout = 5000
 
-            if (provider == AiProvider.GROQ || provider == AiProvider.COHERE) {
+            if (provider == AiProviderType.GROQ || provider == AiProviderType.OPENROUTER) {
                 connection.setRequestProperty("Authorization", "Bearer $apiKey")
+            }
+            // OpenRouter recommends setting these headers
+            if (provider == AiProviderType.OPENROUTER) {
+                connection.setRequestProperty("HTTP-Referer", "https://github.com/Mfarro1522/KDE-Launcher")
+                connection.setRequestProperty("X-Title", "TAPO Launcher")
             }
 
             val responseCode = connection.responseCode
@@ -45,11 +50,11 @@ class ConnectAiProviderUseCase {
         }
     }
 
-    private fun parseModelsResponse(provider: AiProvider, responseString: String): List<String> {
+    private fun parseModelsResponse(provider: AiProviderType, responseString: String): List<String> {
         return try {
             val jsonObject = JSONObject(responseString)
             when (provider) {
-                AiProvider.GROQ -> {
+                AiProviderType.GROQ -> {
                     val data = jsonObject.getJSONArray("data")
                     val models = mutableListOf<String>()
                     for (i in 0 until data.length()) {
@@ -57,7 +62,7 @@ class ConnectAiProviderUseCase {
                     }
                     models
                 }
-                AiProvider.GEMINI -> {
+                AiProviderType.GEMINI -> {
                     val modelsArray = jsonObject.getJSONArray("models")
                     val models = mutableListOf<String>()
                     for (i in 0 until modelsArray.length()) {
@@ -66,13 +71,24 @@ class ConnectAiProviderUseCase {
                     }
                     models
                 }
-                AiProvider.COHERE -> {
-                    val modelsArray = jsonObject.getJSONArray("models")
+                AiProviderType.OPENROUTER -> {
+                    val data = jsonObject.getJSONArray("data")
                     val models = mutableListOf<String>()
-                    for (i in 0 until modelsArray.length()) {
-                        models.add(modelsArray.getJSONObject(i).getString("name"))
+                    for (i in 0 until data.length()) {
+                        val modelObj = data.getJSONObject(i)
+                        val id = modelObj.getString("id")
+                        
+                        // We can filter by those that have "free" in the ID or pricing is 0
+                        // OpenRouter provides pricing info: "pricing": {"prompt": "0", "completion": "0"}
+                        val pricing = modelObj.optJSONObject("pricing")
+                        val isFree = id.endsWith(":free") || 
+                                     (pricing != null && pricing.optString("prompt") == "0" && pricing.optString("completion") == "0")
+                        
+                        if (isFree) {
+                            models.add(id)
+                        }
                     }
-                    models
+                    if (models.isEmpty()) provider.freeModels else models
                 }
             }
         } catch (e: Exception) {

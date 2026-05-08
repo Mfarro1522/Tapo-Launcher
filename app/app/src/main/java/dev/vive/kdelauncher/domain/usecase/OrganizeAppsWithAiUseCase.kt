@@ -1,146 +1,265 @@
 package dev.vive.kdelauncher.domain.usecase
 
-import dev.vive.kdelauncher.data.model.AiProvider
-import dev.vive.kdelauncher.data.model.AppCategory
+import dev.vive.kdelauncher.data.model.AiSource
+import dev.vive.kdelauncher.data.model.AppCategorization
 import dev.vive.kdelauncher.data.model.AppModel
-import dev.vive.kdelauncher.data.model.CategorySuggestion
+import dev.vive.kdelauncher.data.model.defaultCategories
+import dev.vive.kdelauncher.data.provider.AiProvider
+import dev.vive.kdelauncher.data.provider.AiResponseValidator
+import dev.vive.kdelauncher.data.provider.ValidationResult
+import dev.vive.kdelauncher.data.repository.CategoryCache
+import dev.vive.kdelauncher.data.repository.StoredCategorization
+import dev.vive.kdelauncher.data.model.AppCategorizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
-class OrganizeAppsWithAiUseCase {
+data class BatchDebugInfo(
+    val batchIndex: Int,
+    val appCount: Int,
+    val status: String,
+    val detail: String
+)
 
+data class OrganizationDebugInfo(
+    val providerName: String,
+    val modelId: String,
+    val candidateCount: Int,
+    val localMatchCount: Int,
+    val aiCandidateCount: Int,
+    val totalBatches: Int,
+    val batchReports: List<BatchDebugInfo>
+)
+
+data class OrganizationResult(
+    val fromCache: List<AppCategorization>,
+    val fromLocal: List<AppCategorization>,
+    val fromAi: List<AppCategorization>,
+    val fromFallback: List<AppCategorization>,
+    val debug: OrganizationDebugInfo
+)
+
+class OrganizeAppsWithAiUseCase(
+    private val categoryCache: CategoryCache,
+    private val aiPromptBuilder: AiPromptBuilder
+) {
     suspend operator fun invoke(
         apps: List<AppModel>,
-        categories: List<AppCategory>,
         provider: AiProvider,
-        apiKey: String,
-        model: String
-    ): Result<List<CategorySuggestion>> = withContext(Dispatchers.IO) {
-        try {
-            val prompt = buildPrompt(apps, categories)
-            
-            val (urlStr, body, headers) = when (provider) {
-                AiProvider.GROQ -> {
-                    val url = "https://api.groq.com/openai/v1/chat/completions"
-                    val b = JSONObject().apply {
-                        put("model", model)
-                        put("response_format", JSONObject().put("type", "json_object"))
-                        put("messages", JSONArray().put(JSONObject().apply {
-                            put("role", "user")
-                            put("content", prompt)
-                        }))
-                    }
-                    Triple(url, b.toString(), mapOf("Authorization" to "Bearer $apiKey", "Content-Type" to "application/json"))
-                }
-                AiProvider.GEMINI -> {
-                    val url = "https://generativelanguage.googleapis.com/v1beta/models/${'$'}model:generateContent?key=${'$'}apiKey"
-                    val b = JSONObject().apply {
-                        put("contents", JSONArray().put(JSONObject().apply {
-                            put("parts", JSONArray().put(JSONObject().put("text", prompt)))
-                        }))
-                    }
-                    Triple(url, b.toString(), mapOf("Content-Type" to "application/json"))
-                }
-                AiProvider.COHERE -> {
-                    val url = "https://api.cohere.com/v2/chat"
-                    val b = JSONObject().apply {
-                        put("model", model)
-                        put("messages", JSONArray().put(JSONObject().apply {
-                            put("role", "user")
-                            put("content", prompt)
-                        }))
-                    }
-                    Triple(url, b.toString(), mapOf("Authorization" to "Bearer $apiKey", "Content-Type" to "application/json", "Accept" to "application/json"))
+        useCache: Boolean = false
+    ): OrganizationResult = withContext(Dispatchers.IO) {
+
+        val candidates = apps.filter { it.profileTag == dev.vive.kdelauncher.data.model.ProfileType.PERSONAL }
+
+        val cachedList = mutableListOf<AppCategorization>()
+        val uncachedList = mutableListOf<AppModel>()
+
+        if (useCache) {
+            for (app in candidates) {
+                val cached = categoryCache.get(app.packageName, app.versionCode)
+                if (cached != null) {
+                    cachedList.add(
+                        AppCategorization(
+                            packageName = app.packageName,
+                            categoryId = cached.categoryId,
+                            iconName = cached.iconName,
+                            source = runCatching { AiSource.valueOf(cached.source) }.getOrDefault(AiSource.FALLBACK_DEFAULT),
+                            timestamp = cached.timestamp
+                        )
+                    )
+                } else {
+                    uncachedList.add(app)
                 }
             }
+        } else {
+            uncachedList.addAll(candidates)
+        }
 
-            val url = URL(urlStr)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
-            
-            connection.outputStream.use { os ->
-                val input = body.toByteArray()
-                os.write(input, 0, input.size)
-            }
+        val localList = mutableListOf<AppCategorization>()
+        val needsAiList = mutableListOf<AppModel>()
 
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
-                val responseString = connection.inputStream.bufferedReader().use { it.readText() }
-                val content = extractContent(provider, responseString)
-                val suggestions = parseSuggestions(content, apps, categories)
-                Result.success(suggestions)
+        for (app in uncachedList) {
+            val localMatch = LocalHeuristics.classify(app.packageName)
+            if (localMatch != null) {
+                val categorization = AppCategorization(
+                    packageName = app.packageName,
+                    categoryId = localMatch.first,
+                    iconName = localMatch.second,
+                    source = AiSource.LOCAL_HEURISTIC
+                )
+                localList.add(categorization)
+                categoryCache.put(
+                    app.packageName,
+                    app.versionCode,
+                    StoredCategorization(
+                        categorization.categoryId,
+                        categorization.iconName,
+                        categorization.source.name,
+                        app.versionCode,
+                        categorization.timestamp
+                    )
+                )
             } else {
-                val errorString = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "Unknown error"
-                Result.failure(Exception("HTTP ${'$'}responseCode: ${'$'}errorString"))
+                needsAiList.add(app)
             }
-        } catch (e: Exception) {
-            Result.failure(e)
         }
-    }
 
-    private fun buildPrompt(apps: List<AppModel>, categories: List<AppCategory>): String {
-        val appsList = apps.joinToString("\n") { "- ${it.label} (${it.packageName}) [Current: ${it.category.name}]" }
-        val catsList = categories.joinToString(", ") { it.name }
-        return """
-            You are an AI assistant that organizes Android applications into categories.
-            Available categories: $catsList
-            
-            Here is the list of apps:
-            $appsList
-            
-            Return ONLY a valid JSON object with a single array called "suggestions".
-            Each object in the array must have:
-            - "packageName": The package name of the app
-            - "suggestedCategory": The EXACT NAME of one of the available categories
-            - "reason": A brief reason for the change
-            
-            Only include apps that SHOULD change their category. If an app is already in the best category, DO NOT include it.
-            JSON Format: {"suggestions": [{"packageName": "...", "suggestedCategory": "...", "reason": "..."}]}
-        """.trimIndent()
-    }
+        val aiList = mutableListOf<AppCategorization>()
+        val fallbackList = mutableListOf<AppCategorization>()
+        val batchReports = mutableListOf<BatchDebugInfo>()
+        val aiSourceEnum = runCatching { AiSource.valueOf(provider.name.uppercase()) }.getOrDefault(AiSource.GROQ)
 
-    private fun extractContent(provider: AiProvider, response: String): String {
-        val json = JSONObject(response)
-        return when (provider) {
-            AiProvider.GROQ -> json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-            AiProvider.GEMINI -> json.getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
-            AiProvider.COHERE -> json.getJSONObject("message").getJSONArray("content").getJSONObject(0).getString("text")
-        }
-    }
+        val chunks = needsAiList.chunked(20)
+        for ((index, chunk) in chunks.withIndex()) {
+            val systemPrompt = aiPromptBuilder.buildSystemPrompt()
+            val userPrompt = aiPromptBuilder.buildUserPrompt(defaultCategories, chunk)
+            val result = provider.classify(systemPrompt, userPrompt)
 
-    private fun parseSuggestions(jsonString: String, apps: List<AppModel>, categories: List<AppCategory>): List<CategorySuggestion> {
-        val suggestions = mutableListOf<CategorySuggestion>()
-        val cleanJson = jsonString.trim().removePrefix("```json").removeSuffix("```").trim()
-        val json = JSONObject(cleanJson)
-        val arr = json.getJSONArray("suggestions")
-        
-        for (i in 0 until arr.length()) {
-            val item = arr.getJSONObject(i)
-            val pkg = item.getString("packageName")
-            val catName = item.getString("suggestedCategory")
-            val reason = item.getString("reason")
-            
-            val app = apps.find { it.packageName == pkg }
-            val cat = categories.find { it.name == catName }
-            
-            if (app != null && cat != null && app.category != cat) {
-                suggestions.add(
-                    CategorySuggestion(
-                        packageName = pkg,
-                        appName = app.label,
-                        currentCategory = app.category,
-                        suggestedCategory = cat,
-                        reason = reason
+            if (result.isSuccess) {
+                val rawJson = result.getOrNull() ?: ""
+                val expectedPackages = chunk.map { it.packageName }.toSet()
+
+                when (val validation = AiResponseValidator.validate(rawJson, expectedPackages)) {
+                    is ValidationResult.Valid -> {
+                        val returnedPackages = mutableSetOf<String>()
+                        for (i in 0 until validation.apps.length()) {
+                            val obj = validation.apps.getJSONObject(i)
+                            val pkg = obj.getString("p")
+                            val catId = obj.getString("c")
+                            val iconName = obj.getString("i")
+                            val app = chunk.find { it.packageName == pkg }
+                            if (app != null) {
+                                returnedPackages.add(pkg)
+                                val cat = AppCategorization(
+                                    packageName = pkg,
+                                    categoryId = catId,
+                                    iconName = iconName,
+                                    source = aiSourceEnum
+                                )
+                                aiList.add(cat)
+                                categoryCache.put(
+                                    app.packageName,
+                                    app.versionCode,
+                                    StoredCategorization(
+                                        cat.categoryId,
+                                        cat.iconName,
+                                        cat.source.name,
+                                        app.versionCode,
+                                        cat.timestamp
+                                    )
+                                )
+                            }
+                        }
+
+                        val missingFromChunk = chunk.filter { it.packageName !in returnedPackages }
+                        if (missingFromChunk.isNotEmpty()) {
+                            applyFallback(missingFromChunk, fallbackList, categoryCache)
+                        }
+                        val detail = if (missingFromChunk.isEmpty()) {
+                            "JSON válido. ${returnedPackages.size}/${chunk.size} apps clasificadas por IA."
+                        } else {
+                            "JSON válido pero incompleto. IA ${returnedPackages.size}/${chunk.size}; faltantes → fallback ${missingFromChunk.size}."
+                        }
+                        batchReports.add(
+                            BatchDebugInfo(
+                                batchIndex = index + 1,
+                                appCount = chunk.size,
+                                status = if (missingFromChunk.isEmpty()) "AI_OK" else "AI_PARTIAL",
+                                detail = detail
+                            )
+                        )
+                    }
+
+                    is ValidationResult.InvalidJson -> {
+                        applyFallback(chunk, fallbackList, categoryCache)
+                        batchReports.add(
+                            BatchDebugInfo(
+                                batchIndex = index + 1,
+                                appCount = chunk.size,
+                                status = "INVALID_JSON",
+                                detail = validation.reason ?: "La respuesta no contenía un objeto JSON válido."
+                            )
+                        )
+                    }
+
+                    is ValidationResult.MissingApps -> {
+                        applyFallback(chunk, fallbackList, categoryCache)
+                        batchReports.add(
+                            BatchDebugInfo(
+                                batchIndex = index + 1,
+                                appCount = chunk.size,
+                                status = "MISSING_APPS",
+                                detail = "Faltaron ${validation.packages.size} apps en la respuesta del modelo."
+                            )
+                        )
+                    }
+
+                    is ValidationResult.MalformedEntries -> {
+                        applyFallback(chunk, fallbackList, categoryCache)
+                        batchReports.add(
+                            BatchDebugInfo(
+                                batchIndex = index + 1,
+                                appCount = chunk.size,
+                                status = "MALFORMED_ENTRIES",
+                                detail = "La respuesta incluyó categorías o íconos vacíos."
+                            )
+                        )
+                    }
+                }
+            } else {
+                applyFallback(chunk, fallbackList, categoryCache)
+                batchReports.add(
+                    BatchDebugInfo(
+                        batchIndex = index + 1,
+                        appCount = chunk.size,
+                        status = "REQUEST_FAILED",
+                        detail = result.exceptionOrNull()?.message ?: "Fallo desconocido del proveedor."
                     )
                 )
             }
         }
-        return suggestions
+
+        OrganizationResult(
+            fromCache = cachedList,
+            fromLocal = localList,
+            fromAi = aiList,
+            fromFallback = fallbackList,
+            debug = OrganizationDebugInfo(
+                providerName = provider.name,
+                modelId = provider.modelId,
+                candidateCount = candidates.size,
+                localMatchCount = localList.size,
+                aiCandidateCount = needsAiList.size,
+                totalBatches = chunks.size,
+                batchReports = batchReports
+            )
+        )
+    }
+
+    private suspend fun applyFallback(
+        apps: List<AppModel>,
+        fallbackList: MutableList<AppCategorization>,
+        categoryCache: CategoryCache
+    ) {
+        apps.forEach { app ->
+            val legacyCategoryId = AppCategorizer.categorize(app.packageName, -1)
+            val fallbackCat = AppCategorization(
+                packageName = app.packageName,
+                categoryId = legacyCategoryId,
+                iconName = "settings",
+                source = AiSource.LEGACY_HEURISTIC
+            )
+            fallbackList.add(fallbackCat)
+            categoryCache.put(
+                app.packageName,
+                app.versionCode,
+                StoredCategorization(
+                    fallbackCat.categoryId,
+                    fallbackCat.iconName,
+                    fallbackCat.source.name,
+                    app.versionCode,
+                    fallbackCat.timestamp
+                )
+            )
+        }
     }
 }

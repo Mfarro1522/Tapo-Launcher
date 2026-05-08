@@ -3,6 +3,7 @@ package dev.vive.kdelauncher.data.platform
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.UserHandle
@@ -46,6 +47,7 @@ class AndroidWorkProfilePlatformGateway(
         userHandle: UserHandle,
         loadIcons: Boolean
     ): List<WorkProfileApp> {
+        val pm = context.packageManager
         return launcherAppsService
             .getActivityList(null, userHandle)
             .map { activity ->
@@ -58,13 +60,24 @@ class AndroidWorkProfilePlatformGateway(
                 } else {
                     null
                 }
+                val versionCode = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        pm.getPackageInfo(activity.applicationInfo.packageName, 0).longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pm.getPackageInfo(activity.applicationInfo.packageName, 0).versionCode.toLong()
+                    }
+                } catch (_: Exception) {
+                    0L
+                }
                 WorkProfileApp(
                     packageName = activity.applicationInfo.packageName,
                     activityName = activity.name,
                     label = activity.label.toString(),
                     userHandle = userHandle,
                     icon = iconBitmap?.let { AppIconBitmap(it) },
-                    androidCategory = activity.applicationInfo.category
+                    androidCategory = activity.applicationInfo.category,
+                    versionCode = versionCode
                 )
             }
     }

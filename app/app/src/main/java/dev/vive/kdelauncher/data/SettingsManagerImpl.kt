@@ -31,12 +31,13 @@ class SettingsManagerImpl(private val context: Context) : SettingsManager {
         val AI_API_KEY = stringPreferencesKey("ai_api_key")
         val AI_MODEL = stringPreferencesKey("ai_model")
         val PRODUCT_TOUR_COMPLETED = booleanPreferencesKey("product_tour_completed")
+        val CATEGORY_ORDER = stringPreferencesKey("category_order")
 
-        fun categoryNameKey(category: AppCategory) =
-            stringPreferencesKey("cat_name_${category.name}")
+        fun categoryNameKey(category: String) =
+            stringPreferencesKey("cat_name_$category")
 
-        fun categoryIconKey(category: AppCategory) =
-            stringPreferencesKey("cat_icon_${category.name}")
+        fun categoryIconKey(category: String) =
+            stringPreferencesKey("cat_icon_$category")
     }
 
     // --- Theme ---
@@ -98,27 +99,33 @@ class SettingsManagerImpl(private val context: Context) : SettingsManager {
 
     // --- Category display names ---
 
-    override val categoryDisplayNames: Flow<Map<AppCategory, String>> = context.dataStore.data
+    private val knownCategories = setOf(
+        "favorites", "all", "social", "productivity", "utilities",
+        "media", "creativity", "games", "finance", "shopping",
+        "travel", "browsers", "development"
+    )
+
+    override val categoryDisplayNames: Flow<Map<String, String>> = context.dataStore.data
         .map { prefs ->
-            AppCategory.entries.associateWith { cat ->
-                prefs[Keys.categoryNameKey(cat)] ?: cat.displayName
+            knownCategories.associateWith { cat ->
+                prefs[Keys.categoryNameKey(cat)] ?: AppCategory.displayName(cat)
             }
         }
 
-    override suspend fun setCategoryDisplayName(category: AppCategory, name: String) {
+    override suspend fun setCategoryDisplayName(category: String, name: String) {
         context.dataStore.edit { it[Keys.categoryNameKey(category)] = name }
     }
 
     // --- Category icons ---
 
-    override val categoryIconNames: Flow<Map<AppCategory, String>> = context.dataStore.data
+    override val categoryIconNames: Flow<Map<String, String>> = context.dataStore.data
         .map { prefs ->
-            AppCategory.entries.associateWith { cat ->
-                prefs[Keys.categoryIconKey(cat)] ?: getDefaultIconName(cat)
+            knownCategories.associateWith { cat ->
+                prefs[Keys.categoryIconKey(cat)] ?: AppCategory.defaultIcon(cat)
             }
         }
 
-    override suspend fun setCategoryIconName(category: AppCategory, iconName: String) {
+    override suspend fun setCategoryIconName(category: String, iconName: String) {
         context.dataStore.edit { it[Keys.categoryIconKey(category)] = iconName }
     }
 
@@ -127,33 +134,53 @@ class SettingsManagerImpl(private val context: Context) : SettingsManager {
     override val hiddenCategories: Flow<Set<String>> = context.dataStore.data
         .map { it[Keys.HIDDEN_CATEGORIES] ?: emptySet() }
 
-    override suspend fun setCategoryHidden(category: AppCategory, hidden: Boolean) {
+    override suspend fun setCategoryHidden(category: String, hidden: Boolean) {
         context.dataStore.edit { prefs ->
             val current = prefs[Keys.HIDDEN_CATEGORIES] ?: emptySet()
-            prefs[Keys.HIDDEN_CATEGORIES] = if (hidden) current + category.name
-            else current - category.name
+            prefs[Keys.HIDDEN_CATEGORIES] = if (hidden) current + category
+            else current - category
         }
+    }
+
+    // --- Category order ---
+    private val defaultOrder = listOf(
+        dev.vive.kdelauncher.data.model.AppCategory.FAVORITES,
+        dev.vive.kdelauncher.data.model.AppCategory.ALL,
+        dev.vive.kdelauncher.data.model.AppCategory.SOCIAL,
+        dev.vive.kdelauncher.data.model.AppCategory.PRODUCTIVITY,
+        dev.vive.kdelauncher.data.model.AppCategory.UTILITIES
+    )
+
+    override val categoryOrder: Flow<List<String>> = context.dataStore.data
+        .map { prefs ->
+            val stored = prefs[Keys.CATEGORY_ORDER]
+            if (stored.isNullOrBlank()) defaultOrder
+            else stored.split(",").filter { it.isNotBlank() }
+        }
+
+    override suspend fun setCategoryOrder(order: List<String>) {
+        context.dataStore.edit { it[Keys.CATEGORY_ORDER] = order.joinToString(",") }
     }
 
     // --- App category overrides ---
 
-    override val categoryOverrides: Flow<Map<String, AppCategory>> = context.dataStore.data
+    override val categoryOverrides: Flow<Map<String, String>> = context.dataStore.data
         .map { prefs ->
             val raw = prefs[Keys.CATEGORY_OVERRIDES] ?: emptySet()
             raw.mapNotNull { entry ->
                 val parts = entry.split("=", limit = 2)
                 if (parts.size != 2) return@mapNotNull null
                 val key = parts[0]
-                val category = runCatching { AppCategory.valueOf(parts[1]) }.getOrNull()
-                if (category != null) key to category else null
+                val category = parts[1]
+                if (category.isNotBlank()) key to category else null
             }.toMap()
         }
 
-    override suspend fun setCategoryOverride(key: String, category: AppCategory) {
+    override suspend fun setCategoryOverride(key: String, category: String) {
         context.dataStore.edit { prefs ->
             val current = (prefs[Keys.CATEGORY_OVERRIDES] ?: emptySet()).toMutableSet()
             current.removeAll { it.startsWith("$key=") }
-            current.add("$key=${category.name}")
+            current.add("$key=$category")
             prefs[Keys.CATEGORY_OVERRIDES] = current
         }
     }
@@ -163,6 +190,23 @@ class SettingsManagerImpl(private val context: Context) : SettingsManager {
             val current = (prefs[Keys.CATEGORY_OVERRIDES] ?: emptySet()).toMutableSet()
             if (current.removeAll { it.startsWith("$key=") }) {
                 prefs[Keys.CATEGORY_OVERRIDES] = current
+            }
+        }
+    }
+
+    override suspend fun clearAllCategoryOverrides() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.CATEGORY_OVERRIDES)
+        }
+    }
+
+    override suspend fun resetCategoryPresentation() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.HIDDEN_CATEGORIES)
+            prefs.remove(Keys.CATEGORY_ORDER)
+            knownCategories.forEach { category ->
+                prefs.remove(Keys.categoryNameKey(category))
+                prefs.remove(Keys.categoryIconKey(category))
             }
         }
     }
@@ -186,7 +230,7 @@ class SettingsManagerImpl(private val context: Context) : SettingsManager {
     override val aiProvider: Flow<String> = context.dataStore.data
         .map { it[Keys.AI_PROVIDER] ?: "groq" }
 
-    override suspend fun setAiProvider(provider: String) {
+    override suspend fun setAiProviderType(provider: String) {
         context.dataStore.edit { it[Keys.AI_PROVIDER] = provider }
     }
 
@@ -221,28 +265,5 @@ class SettingsManagerImpl(private val context: Context) : SettingsManager {
 
     override suspend fun resetAll() {
         context.dataStore.edit { it.clear() }
-    }
-
-    companion object {
-        fun getDefaultIconName(category: AppCategory): String = when (category) {
-            AppCategory.FAVORITES -> "Star"
-            AppCategory.ALL -> "GridView"
-            AppCategory.DEVELOPMENT -> "Code"
-            AppCategory.GRAPHICS -> "Palette"
-            AppCategory.INTERNET -> "Language"
-            AppCategory.GAMES -> "Gamepad"
-            AppCategory.MULTIMEDIA -> "MusicNote"
-            AppCategory.SYSTEM -> "Settings"
-            AppCategory.UTILITIES -> "FolderOpen"
-        }
-
-        val availableIcons = listOf(
-            "Star", "GridView", "Code", "Palette", "Language",
-            "Gamepad", "MusicNote", "Settings", "FolderOpen",
-            "Favorite", "Home", "Work", "School", "Rocket",
-            "Terminal", "Cloud", "Camera", "ShoppingCart", "Bolt",
-            "Diamond", "Brush", "Build", "Explore", "Forum",
-            "Headphones", "LocalCafe", "Movie", "Newspaper", "Science"
-        )
     }
 }

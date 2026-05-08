@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Warning
@@ -129,7 +130,7 @@ fun LauncherScreen(
                     modifier = Modifier.weight(1f)
                 )
                 Icon(
-                    imageVector = Icons.Rounded.OpenInNew,
+                    imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
                     contentDescription = null,
                     modifier = Modifier.size(14.dp),
                     tint = Color(0xFFFF9100).copy(alpha = 0.7f)
@@ -168,6 +169,7 @@ fun LauncherScreen(
                 showIconBackground = uiState.showIconBackground,
                 gridColumns = uiState.gridColumns,
                 categoryConfigs = uiState.categoryConfigs,
+                appCounts = uiState.appCounts,
                 installedIconPacks = uiState.installedIconPacks,
                 selectedIconPack = uiState.selectedIconPack,
                 isLoadingIconPacks = uiState.isLoadingIconPacks,
@@ -187,11 +189,13 @@ fun LauncherScreen(
                 onCategoryRename = { cat, name -> viewModel.setCategoryDisplayName(cat, name) },
                 onCategoryIconChange = { cat, icon -> viewModel.setCategoryIconName(cat, icon) },
                 onCategoryToggleHidden = { viewModel.toggleCategoryHidden(it) },
+                onDeleteCategory = { cat, count -> viewModel.deleteCategory(cat, count) },
+                onCategoryOrderChange = { viewModel.setCategoryOrder(it) },
                 onSelectIconPack = { viewModel.setIconPack(it) },
                 onReset = { viewModel.resetSettings() },
                 onToggleLabs = { viewModel.setLabsEnabled(it) },
-                onConnectAi = { provider, key -> viewModel.connectAiProvider(provider, key) },
-                onDisconnectAi = { viewModel.disconnectAiProvider() },
+                onConnectAi = { provider, key -> viewModel.connectAiProviderType(provider, key) },
+                onDisconnectAi = { viewModel.disconnectAiProviderType() },
                 onSetAiModel = { viewModel.setAiModel(it) },
                 onOrganizeApps = { viewModel.organizeAppsWithAi() },
                 onApplySuggestions = { viewModel.applyAiSuggestions(it) },

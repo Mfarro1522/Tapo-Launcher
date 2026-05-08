@@ -9,6 +9,7 @@ interface ProfileManager {
     val personalFavorites: StateFlow<Set<String>>
     val workFavorites: StateFlow<Set<String>>
     suspend fun toggleFavorite(profile: Profile, packageName: String): Boolean
+    suspend fun clearFavorites(profile: Profile)
     val workApps: StateFlow<Set<String>>
     suspend fun toggleWorkApp(packageName: String): Boolean
 }

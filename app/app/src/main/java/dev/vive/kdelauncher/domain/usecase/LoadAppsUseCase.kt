@@ -34,7 +34,8 @@ class LoadAppsUseCase(
                         category = dev.vive.kdelauncher.data.model.AppCategorizer.categorize(
                             app.packageName, app.androidCategory
                         ),
-                        userHandle = app.userHandle
+                        userHandle = app.userHandle,
+                        versionCode = app.versionCode
                     )
                 }
             } else emptyList()

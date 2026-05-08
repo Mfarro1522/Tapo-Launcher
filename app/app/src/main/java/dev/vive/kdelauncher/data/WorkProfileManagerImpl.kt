@@ -111,5 +111,6 @@ data class WorkProfileApp(
     val label: String,
     val userHandle: UserHandle,
     val icon: AppIconBitmap?,
-    val androidCategory: Int
+    val androidCategory: Int,
+    val versionCode: Long = 0L
 )

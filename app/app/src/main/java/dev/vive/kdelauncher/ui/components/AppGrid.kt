@@ -41,16 +41,16 @@ import dev.vive.kdelauncher.ui.theme.LocalLauncherAccent
 fun AppGrid(
     apps: List<AppModel>,
     searchQuery: String,
-    activeCategory: AppCategory,
+    activeCategory: String,
     categoryConfigs: List<CategoryConfig>,
-    visibleCategories: List<AppCategory>,
+    visibleCategories: List<String>,
     showAppLabels: Boolean,
     iconSize: IconSize = IconSize.MEDIUM,
     showIconBackground: Boolean = true,
     gridColumns: Int = 3,
     onAppClick: (AppModel) -> Unit,
     onToggleFavorite: (AppModel) -> Unit,
-    onAssignCategory: (AppModel, AppCategory) -> Unit,
+    onAssignCategory: (AppModel, String) -> Unit,
     onClearCategory: (AppModel) -> Unit,
     onAppInfo: (AppModel) -> Unit,
     onUninstall: (AppModel) -> Unit,
@@ -58,7 +58,7 @@ fun AppGrid(
 ) {
     val colors = LocalColors.current
     val config = categoryConfigs.find { it.category == activeCategory }
-    val categoryName = config?.displayName ?: activeCategory.displayName
+    val categoryName = config?.displayName ?: AppCategory.displayName(activeCategory)
 
     val gridState = rememberLazyGridState()
 
@@ -70,7 +70,7 @@ fun AppGrid(
             .filter { it != AppCategory.FAVORITES && it != AppCategory.ALL }
             .map { cat ->
                 val name = categoryConfigs.find { it.category == cat }?.displayName
-                    ?: cat.displayName
+                    ?: AppCategory.displayName(cat)
                 cat to name
             }
     }

@@ -13,7 +13,7 @@ import dev.vive.kdelauncher.data.model.ColorTheme
 internal data class LauncherAppInput(
     val allApps: List<AppModel>,
     val searchQuery: String,
-    val activeCategory: AppCategory
+    val activeCategory: String
 )
 
 internal data class LauncherSettingsDisplayInput(
@@ -42,8 +42,8 @@ internal data class LauncherProfileInput(
 
 internal data class LauncherCategoryInput(
     val categoryConfigs: List<CategoryConfig>,
-    val visibleCategories: List<AppCategory>,
-    val categoryOverrides: Map<String, AppCategory>
+    val visibleCategories: List<String>,
+    val categoryOverrides: Map<String, String>
 )
 
 internal data class LauncherSystemInput(
@@ -54,7 +54,7 @@ internal data class LauncherSystemInput(
 
 internal data class LauncherAiInput(
     val labsEnabled: Boolean,
-    val aiProvider: dev.vive.kdelauncher.data.model.AiProvider,
+    val aiProvider: dev.vive.kdelauncher.data.model.AiProviderType,
     val aiModel: String,
     val aiConnectionState: AiConnectionState,
     val organizationState: OrganizationState
@@ -80,7 +80,7 @@ internal data class LauncherAppContentInput(
 internal data class LauncherAppContentState(
     val allApps: List<AppModel>,
     val filteredApps: List<AppModel>,
-    val appCounts: Map<AppCategory, Int>
+    val appCounts: Map<String, Int>
 )
 
 internal object LauncherUiStateMapper {
@@ -165,7 +165,7 @@ internal object LauncherUiStateMapper {
         apps: List<AppModel>,
         profileFilteredApps: List<AppModel>,
         searchQuery: String,
-        activeCategory: AppCategory
+        activeCategory: String
     ): List<AppModel> {
         if (searchQuery.isNotBlank()) {
             return apps.filter {
@@ -181,14 +181,19 @@ internal object LauncherUiStateMapper {
         }
     }
 
-    private fun buildCategoryCounts(profileFilteredApps: List<AppModel>): Map<AppCategory, Int> {
-        return AppCategory.entries.associateWith { category ->
+    private fun buildCategoryCounts(profileFilteredApps: List<AppModel>): Map<String, Int> {
+        val fixed = AppCategory.FIXED.associateWith { category ->
             when (category) {
                 AppCategory.FAVORITES -> profileFilteredApps.count { it.isFavorite }
                 AppCategory.ALL -> profileFilteredApps.size
                 else -> profileFilteredApps.count { it.category == category }
             }
         }
+        val dynamic = profileFilteredApps
+            .filter { it.category !in AppCategory.FIXED }
+            .groupingBy { it.category }
+            .eachCount()
+        return fixed + dynamic
     }
 }
 

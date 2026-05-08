@@ -66,6 +66,14 @@ class ProfileManagerImpl(context: Context) : ProfileManager {
         return isFavorite
     }
 
+    override suspend fun clearFavorites(profile: Profile) {
+        prefs.edit().putStringSet(favoritesKey(profile), emptySet()).apply()
+        updateFavoritesFlow(profile, emptySet())
+        if (profile.type == ProfileType.PERSONAL) {
+            prefs.edit().remove(KEY_FAVORITES_LEGACY).apply()
+        }
+    }
+
     override suspend fun toggleWorkApp(packageName: String): Boolean {
         val current = _workApps.value.toMutableSet()
         val isWork = if (current.contains(packageName)) {

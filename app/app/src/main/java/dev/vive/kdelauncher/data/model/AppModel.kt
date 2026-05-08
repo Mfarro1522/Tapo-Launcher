@@ -23,145 +23,193 @@ data class AppModel(
     val activityName: String,
     val label: String,
     val icon: AppIconBitmap? = null,
-    val category: AppCategory = AppCategory.ALL,
+    val category: String = AppCategory.ALL,
     val isFavorite: Boolean = false,
     val profileTag: ProfileType = ProfileType.PERSONAL,
-    val userHandle: UserHandle? = null
+    val userHandle: UserHandle? = null,
+    val versionCode: Long = 0L
 )
 
 /**
- * App categories inspired by KDE's menu structure.
- * Each category has a display label and an associated Material icon name.
+ * Fixed categories shown by default in the launcher UI.
+ * The AI can also create dynamic categories on the fly.
  */
-enum class AppCategory(val displayName: String) {
-    FAVORITES("Favoritos"),
-    ALL("Todas"),
-    DEVELOPMENT("Desarrollo"),
-    GRAPHICS("Gráficos"),
-    INTERNET("Internet"),
-    GAMES("Juegos"),
-    MULTIMEDIA("Multimedia"),
-    SYSTEM("Sistema"),
-    UTILITIES("Utilidades")
+object AppCategory {
+    const val FAVORITES = "favorites"
+    const val ALL = "all"
+    const val SOCIAL = "social"
+    const val PRODUCTIVITY = "productivity"
+    const val UTILITIES = "utilities"
+
+    /** Categories always visible in settings / tabs */
+    val FIXED = listOf(FAVORITES, ALL, SOCIAL, PRODUCTIVITY, UTILITIES)
+
+    /** Human-readable labels (Spanish). Dynamic categories fallback to capitalized ID. */
+    fun displayName(id: String): String = when (id) {
+        FAVORITES -> "Favoritos"
+        ALL -> "Todas"
+        SOCIAL -> "Social"
+        PRODUCTIVITY -> "Productividad"
+        UTILITIES -> "Utilidades"
+        "media" -> "Media"
+        "creativity" -> "Creatividad"
+        "games" -> "Juegos"
+        "finance" -> "Finanzas"
+        "shopping" -> "Compras"
+        "travel" -> "Viajes"
+        "browsers" -> "Navegadores"
+        "development" -> "Desarrollo"
+        else -> id.replaceFirstChar { it.uppercase() }
+    }
+
+    /** Default Material icon name for a category ID. */
+    fun defaultIcon(id: String): String = when (id) {
+        FAVORITES -> "Star"
+        ALL -> "GridView"
+        SOCIAL -> "Forum"
+        PRODUCTIVITY -> "Work"
+        UTILITIES -> "Build"
+        "media" -> "PlayArrow"
+        "creativity" -> "Palette"
+        "games" -> "Gamepad"
+        "finance" -> "AttachMoney"
+        "shopping" -> "ShoppingCart"
+        "travel" -> "Map"
+        "browsers" -> "Language"
+        "development" -> "Code"
+        else -> "Folder"
+    }
+
+    val availableIcons = listOf(
+        "Star", "GridView", "Code", "Palette", "Language",
+        "Gamepad", "MusicNote", "Settings", "FolderOpen",
+        "Favorite", "Home", "Work", "School", "Rocket",
+        "Terminal", "Cloud", "Camera", "ShoppingCart", "Bolt",
+        "Diamond", "Brush", "Build", "Explore", "Forum",
+        "Headphones", "LocalCafe", "Movie", "Newspaper", "Science"
+    )
 }
 
 /**
  * Categorization rules based on Android's ApplicationInfo.category
  * and common package name patterns.
+ * Returns a String category ID so the AI / heuristics can use any taxonomy.
  */
 object AppCategorizer {
 
     private data class CategoryRule(
         val pattern: String,
-        val category: AppCategory,
+        val category: String,
         val baseScore: Int = 10
     )
 
     private val exactPackageCategories = mapOf(
-        "com.android.vending" to AppCategory.INTERNET,
-        "com.facebook.pages.app" to AppCategory.INTERNET,
-        "com.google.android.apps.photos" to AppCategory.GRAPHICS,
-        "com.google.android.youtube" to AppCategory.MULTIMEDIA,
-        "com.google.android.play.games" to AppCategory.GAMES
+        "com.android.vending" to "shopping",
+        "com.facebook.pages.app" to "social",
+        "com.google.android.apps.photos" to "creativity",
+        "com.google.android.youtube" to "media",
+        "com.google.android.play.games" to "games"
     )
 
     private val categoryRules = listOf(
         // Development
-        CategoryRule("termux", AppCategory.DEVELOPMENT, baseScore = 20),
-        CategoryRule("terminal", AppCategory.DEVELOPMENT),
-        CategoryRule("editor", AppCategory.DEVELOPMENT),
-        CategoryRule("ide", AppCategory.DEVELOPMENT),
-        CategoryRule("code", AppCategory.DEVELOPMENT),
-        CategoryRule("github", AppCategory.DEVELOPMENT),
-        CategoryRule("gitlab", AppCategory.DEVELOPMENT),
-        CategoryRule("docker", AppCategory.DEVELOPMENT),
-        CategoryRule("database", AppCategory.DEVELOPMENT),
-        CategoryRule("sql", AppCategory.DEVELOPMENT),
-        CategoryRule("dev", AppCategory.DEVELOPMENT, baseScore = 6),
+        CategoryRule("termux", "development", baseScore = 20),
+        CategoryRule("terminal", "development"),
+        CategoryRule("editor", "development"),
+        CategoryRule("ide", "development"),
+        CategoryRule("code", "development"),
+        CategoryRule("github", "development"),
+        CategoryRule("gitlab", "development"),
+        CategoryRule("docker", "development"),
+        CategoryRule("database", "development"),
+        CategoryRule("sql", "development"),
+        CategoryRule("dev", "development", baseScore = 6),
 
-        // Graphics
-        CategoryRule("gallery", AppCategory.GRAPHICS),
-        CategoryRule("photo", AppCategory.GRAPHICS),
-        CategoryRule("photos", AppCategory.GRAPHICS, baseScore = 14),
-        CategoryRule("camera", AppCategory.GRAPHICS),
-        CategoryRule("draw", AppCategory.GRAPHICS),
-        CategoryRule("paint", AppCategory.GRAPHICS),
-        CategoryRule("image", AppCategory.GRAPHICS),
-        CategoryRule("sketch", AppCategory.GRAPHICS),
-        CategoryRule("canva", AppCategory.GRAPHICS),
-        CategoryRule("snapseed", AppCategory.GRAPHICS, baseScore = 16),
+        // Graphics / Creativity
+        CategoryRule("gallery", "creativity"),
+        CategoryRule("photo", "creativity"),
+        CategoryRule("photos", "creativity", baseScore = 14),
+        CategoryRule("camera", "creativity"),
+        CategoryRule("draw", "creativity"),
+        CategoryRule("paint", "creativity"),
+        CategoryRule("image", "creativity"),
+        CategoryRule("sketch", "creativity"),
+        CategoryRule("canva", "creativity"),
+        CategoryRule("snapseed", "creativity", baseScore = 16),
 
-        // Internet
-        CategoryRule("browser", AppCategory.INTERNET),
-        CategoryRule("chrome", AppCategory.INTERNET),
-        CategoryRule("firefox", AppCategory.INTERNET),
-        CategoryRule("brave", AppCategory.INTERNET),
-        CategoryRule("mail", AppCategory.INTERNET),
-        CategoryRule("email", AppCategory.INTERNET),
-        CategoryRule("gmail", AppCategory.INTERNET),
-        CategoryRule("slack", AppCategory.INTERNET),
-        CategoryRule("telegram", AppCategory.INTERNET),
-        CategoryRule("whatsapp", AppCategory.INTERNET),
-        CategoryRule("discord", AppCategory.INTERNET),
-        CategoryRule("twitter", AppCategory.INTERNET),
-        CategoryRule("reddit", AppCategory.INTERNET),
-        CategoryRule("instagram", AppCategory.INTERNET),
-        CategoryRule("messenger", AppCategory.INTERNET),
-        CategoryRule("signal", AppCategory.INTERNET),
-        CategoryRule("facebook", AppCategory.INTERNET),
-        CategoryRule("pages", AppCategory.INTERNET),
-        CategoryRule("store", AppCategory.INTERNET),
-        CategoryRule("vending", AppCategory.INTERNET, baseScore = 14),
+        // Browsers
+        CategoryRule("browser", "browsers"),
+        CategoryRule("chrome", "browsers"),
+        CategoryRule("firefox", "browsers"),
+        CategoryRule("brave", "browsers"),
+
+        // Social / Internet
+        CategoryRule("mail", "productivity"),
+        CategoryRule("email", "productivity"),
+        CategoryRule("gmail", "productivity"),
+        CategoryRule("slack", "productivity"),
+        CategoryRule("telegram", "social"),
+        CategoryRule("whatsapp", "social"),
+        CategoryRule("discord", "social"),
+        CategoryRule("twitter", "social"),
+        CategoryRule("reddit", "social"),
+        CategoryRule("instagram", "social"),
+        CategoryRule("messenger", "social"),
+        CategoryRule("signal", "social"),
+        CategoryRule("facebook", "social"),
+        CategoryRule("pages", "social"),
+
+        // Shopping
+        CategoryRule("store", "shopping"),
+        CategoryRule("vending", "shopping", baseScore = 14),
 
         // Games
-        CategoryRule("game", AppCategory.GAMES, baseScore = 14),
-        CategoryRule("games", AppCategory.GAMES, baseScore = 16),
-        CategoryRule("play", AppCategory.GAMES, baseScore = 5),
+        CategoryRule("game", "games", baseScore = 14),
+        CategoryRule("games", "games", baseScore = 16),
+        CategoryRule("play", "games", baseScore = 5),
 
-        // Multimedia
-        CategoryRule("music", AppCategory.MULTIMEDIA, baseScore = 14),
-        CategoryRule("spotify", AppCategory.MULTIMEDIA, baseScore = 16),
-        CategoryRule("video", AppCategory.MULTIMEDIA, baseScore = 14),
-        CategoryRule("youtube", AppCategory.MULTIMEDIA, baseScore = 16),
-        CategoryRule("vlc", AppCategory.MULTIMEDIA, baseScore = 16),
-        CategoryRule("podcast", AppCategory.MULTIMEDIA, baseScore = 14),
-        CategoryRule("player", AppCategory.MULTIMEDIA, baseScore = 16),
-        CategoryRule("audio", AppCategory.MULTIMEDIA, baseScore = 14),
-        CategoryRule("netflix", AppCategory.MULTIMEDIA, baseScore = 16),
-        CategoryRule("tiktok", AppCategory.MULTIMEDIA, baseScore = 14),
+        // Media
+        CategoryRule("music", "media", baseScore = 14),
+        CategoryRule("spotify", "media", baseScore = 16),
+        CategoryRule("video", "media", baseScore = 14),
+        CategoryRule("youtube", "media", baseScore = 16),
+        CategoryRule("vlc", "media", baseScore = 16),
+        CategoryRule("podcast", "media", baseScore = 14),
+        CategoryRule("player", "media", baseScore = 16),
+        CategoryRule("audio", "media", baseScore = 14),
+        CategoryRule("netflix", "media", baseScore = 16),
+        CategoryRule("tiktok", "media", baseScore = 14),
 
-        // System
-        CategoryRule("settings", AppCategory.SYSTEM, baseScore = 18),
-        CategoryRule("monitor", AppCategory.SYSTEM),
-        CategoryRule("filemanager", AppCategory.SYSTEM),
-        CategoryRule("files", AppCategory.SYSTEM),
-        CategoryRule("manager", AppCategory.SYSTEM, baseScore = 8),
-        CategoryRule("updater", AppCategory.SYSTEM),
-
-        // Utilities
-        CategoryRule("calculator", AppCategory.UTILITIES, baseScore = 14),
-        CategoryRule("calc", AppCategory.UTILITIES),
-        CategoryRule("clock", AppCategory.UTILITIES),
-        CategoryRule("alarm", AppCategory.UTILITIES),
-        CategoryRule("calendar", AppCategory.UTILITIES),
-        CategoryRule("notes", AppCategory.UTILITIES),
-        CategoryRule("weather", AppCategory.UTILITIES),
-        CategoryRule("maps", AppCategory.UTILITIES, baseScore = 14),
-        CategoryRule("translate", AppCategory.UTILITIES),
-        CategoryRule("compass", AppCategory.UTILITIES),
-        CategoryRule("flashlight", AppCategory.UTILITIES),
-        CategoryRule("recorder", AppCategory.UTILITIES),
-        CategoryRule("contacts", AppCategory.UTILITIES),
-        CategoryRule("phone", AppCategory.UTILITIES),
-        CategoryRule("dialer", AppCategory.UTILITIES),
-        CategoryRule("messages", AppCategory.UTILITIES),
-        CategoryRule("sms", AppCategory.UTILITIES),
+        // System / Utilities
+        CategoryRule("settings", "utilities", baseScore = 18),
+        CategoryRule("monitor", "utilities"),
+        CategoryRule("filemanager", "utilities"),
+        CategoryRule("files", "utilities"),
+        CategoryRule("manager", "utilities", baseScore = 8),
+        CategoryRule("updater", "utilities"),
+        CategoryRule("calculator", "utilities", baseScore = 14),
+        CategoryRule("calc", "utilities"),
+        CategoryRule("clock", "utilities"),
+        CategoryRule("alarm", "utilities"),
+        CategoryRule("calendar", "productivity"),
+        CategoryRule("notes", "productivity"),
+        CategoryRule("weather", "utilities"),
+        CategoryRule("maps", "travel", baseScore = 14),
+        CategoryRule("translate", "utilities"),
+        CategoryRule("compass", "travel"),
+        CategoryRule("flashlight", "utilities"),
+        CategoryRule("recorder", "utilities"),
+        CategoryRule("contacts", "social"),
+        CategoryRule("phone", "social"),
+        CategoryRule("dialer", "social"),
+        CategoryRule("messages", "social"),
+        CategoryRule("sms", "social")
     )
 
     /**
      * Categorize an app based on its package name and Android category info.
      */
-    fun categorize(packageName: String, androidCategory: Int): AppCategory {
+    fun categorize(packageName: String, androidCategory: Int): String {
         val lowerPkg = packageName.lowercase()
         exactPackageCategories[lowerPkg]?.let { return it }
 
@@ -179,14 +227,14 @@ object AppCategorizer {
 
         // Fall back to Android's built-in category
         return when (androidCategory) {
-            android.content.pm.ApplicationInfo.CATEGORY_GAME -> AppCategory.GAMES
-            android.content.pm.ApplicationInfo.CATEGORY_AUDIO -> AppCategory.MULTIMEDIA
-            android.content.pm.ApplicationInfo.CATEGORY_VIDEO -> AppCategory.MULTIMEDIA
-            android.content.pm.ApplicationInfo.CATEGORY_IMAGE -> AppCategory.GRAPHICS
-            android.content.pm.ApplicationInfo.CATEGORY_SOCIAL -> AppCategory.INTERNET
-            android.content.pm.ApplicationInfo.CATEGORY_NEWS -> AppCategory.INTERNET
-            android.content.pm.ApplicationInfo.CATEGORY_MAPS -> AppCategory.UTILITIES
-            android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY -> AppCategory.UTILITIES
+            android.content.pm.ApplicationInfo.CATEGORY_GAME -> "games"
+            android.content.pm.ApplicationInfo.CATEGORY_AUDIO -> "media"
+            android.content.pm.ApplicationInfo.CATEGORY_VIDEO -> "media"
+            android.content.pm.ApplicationInfo.CATEGORY_IMAGE -> "creativity"
+            android.content.pm.ApplicationInfo.CATEGORY_SOCIAL -> "social"
+            android.content.pm.ApplicationInfo.CATEGORY_NEWS -> "browsers"
+            android.content.pm.ApplicationInfo.CATEGORY_MAPS -> "travel"
+            android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY -> "productivity"
             else -> AppCategory.ALL
         }
     }

@@ -45,6 +45,28 @@ La limpieza se ejecutó en 5 fases controladas:
 - **Arquitectura Mantenible:** El proyecto respeta la separación de responsabilidades a través de capas lógicas predecibles.
 - **Listos para Crecer:** El repositorio está ahora en un estado técnico maduro para integrar características más complejas (ej. widgets, nuevos módulos, o animaciones avanzadas) de forma segura y sin deudas pendientes críticas.
 
+### Estado actual (resumen)
+
+- La **refactorización arquitectónica** ya está completada (Fases 1 a 5).
+- Se resolvieron **problemas críticos de rendimiento** en cuatro fases:
+  - Fase 1: Aislamiento de estado con múltiples `StateFlow` y migración a `Modifier.Node`.
+  - Fase 2: Creación de `AppGridState` independiente, carga bifásica real, y filtrado en `Dispatchers.Default`.
+  - Fase 3: Eliminación de `onGloballyPositioned` masivo en celdas del grid, estabilización de `AppModel` con `@Immutable`, debounce de búsqueda (150ms), y aplicación condicional de modifiers de tour.
+  - **Fase 4 (última):** Corrección crítica del manifest (`clearTaskOnLaunch`, `largeHeap`), caché de proceso (`AppListCache`) + caché persistente en disco (`PersistentAppCache`) para warm start instantáneo y recuperación tras process death, single emission en startup, y defer de trabajo no crítico.
+- Se implementaron las funcionalidades de **Temas de Color Dev** (Dracula, Tokyo Night, Vercel, Catppuccin, Nord, Gruvbox, One Dark) y **TAPO Labs** (auto-organización experimental de apps con IA a través de Groq, Gemini o Cohere).
+- Se implementó exitosamente el **Product Tour** nativo (tutorial interactivo de primer uso) con animaciones cinemáticas, transiciones de barrido, y soporte adaptativo para modo claro y oscuro. El tour usa modifiers condicionales para cero overhead cuando no está activo.
+- **Nuevas categorías inteligentes:** Sistema de smart grouping para Wallets, Compras, Finanzas y Dev con lógica de merge automático.
+- **Sistema de apps ocultas:** Ocultamiento permanente y temporal con persistencia en DataStore y UI de gestión en el panel de ajustes.
+- **Menú contextual rediseñado:** Popup posicionado cerca del ícono con estilo consistente al tema, acciones de Favorito, Mover, Información y Desinstalar.
+- **Colores hardcodeados eliminados:** Auditoría completa de la UI reemplazando colores literales por tokens semánticos del sistema de diseño.
+- **Bugs críticos corregidos:**
+  - Renombrar categorías dinámicas (wallets, compras, finanzas, dev) ahora persiste correctamente gracias a la actualización de `knownCategories` en `SettingsManagerImpl`.
+  - Process death restore lento (~20s pantalla vacía) corregido con `PersistentAppCache`: caché en disco JSON que restaura la lista de apps en ~50ms, renderizando la UI instantáneamente mientras los íconos se cargan en background.
+  - Orientación fija a portrait programáticamente (`requestedOrientation = SCREEN_ORIENTATION_PORTRAIT` en `MainActivity.onCreate()`) para evitar recreaciones y el botón de rotación manual, sin interferir con gestos del sistema en el manifest.
+  - El asistente del sistema (long-press Home → Google Assistant/Gemini/Circle to Search) funciona correctamente tras remover `priority="1"` del intent-filter HOME, que interfería con la resolución de gestos del sistema en ciertos dispositivos.
+- El proyecto usa un **launcher real** con soporte para Work Profile, icon packs, ajustes visuales, y tematización dinámica.
+- *Nota sobre pruebas:* Siguiendo las reglas del repositorio, el proyecto se mantiene ágil sin la creación activa de suites de tests para las capas de UI experimentales.
+
 ## 4. Evolución Reciente (Temas Dev & TAPO Labs)
 
 En la iteración más reciente, se integraron funcionalidades de alto impacto manteniendo la arquitectura limpia existente:

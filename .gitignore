@@ -24,6 +24,10 @@ misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
 
+# Agent metadata
+.agents/
+AGENTS.md
+
 # Keystore files
 *.jks
 *.keystore

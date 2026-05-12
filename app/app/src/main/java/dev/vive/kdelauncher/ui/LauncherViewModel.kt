@@ -8,9 +8,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.vive.kdelauncher.AppContainer
 import dev.vive.kdelauncher.data.model.AppCategory
+import dev.vive.kdelauncher.data.model.AppIconBitmap
 import dev.vive.kdelauncher.data.model.AppModel
 import dev.vive.kdelauncher.data.model.Profile
 import dev.vive.kdelauncher.data.model.ProfileType
+import dev.vive.kdelauncher.data.repository.IconDiskCache
 import dev.vive.kdelauncher.domain.repository.AppRepository
 import dev.vive.kdelauncher.domain.repository.ProfileManager
 import dev.vive.kdelauncher.domain.repository.SettingsManager
@@ -34,6 +36,8 @@ import dev.vive.kdelauncher.ui.components.CategoryConfig
 import dev.vive.kdelauncher.ui.components.IconSize
 import dev.vive.kdelauncher.ui.components.parseIconSize
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -135,6 +139,7 @@ class LauncherViewModel(
     private val persistentAppCache: dev.vive.kdelauncher.data.repository.PersistentAppCache,
     private val checkProductTourStatusUseCase: CheckProductTourStatusUseCase,
     private val dismissProductTourUseCase: DismissProductTourUseCase,
+    private val iconDiskCache: IconDiskCache,
 ) : AndroidViewModel(application) {
 
     // ── UI-controlled state ──────────────────────────────────────────────────
@@ -144,7 +149,7 @@ class LauncherViewModel(
         .debounce(150)
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.Eagerly,
             initialValue = ""
         )
     private val _activeCategory = MutableStateFlow(AppCategory.FAVORITES)
@@ -176,13 +181,18 @@ class LauncherViewModel(
     // ── Hidden apps state ────────────────────────────────────────────────────
     private val _hiddenApps = MutableStateFlow<Set<String>>(emptySet())
     private val _tempHiddenApps = MutableStateFlow<Map<String, Long>>(emptyMap())
+    // Ephemeral flag: when true, ALL hidden apps become visible in the UI.
+    // Dies with the process (default = false). Does NOT touch DataStore.
+    private val _showAllHiddenTemporarily = MutableStateFlow(false)
 
     // ── Derived flows from reactive repositories ─────────────────────────────
     private val visibleAppsFlow = combine(
         _allApps,
         _hiddenApps,
-        _tempHiddenApps
-    ) { apps, hidden, tempHidden ->
+        _tempHiddenApps,
+        _showAllHiddenTemporarily
+    ) { apps, hidden, tempHidden, showAll ->
+        if (showAll) return@combine apps
         val now = System.currentTimeMillis()
         apps.filter { app ->
             app.packageName !in hidden && (tempHidden[app.packageName] ?: 0L) <= now
@@ -304,7 +314,7 @@ class LauncherViewModel(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly,
         initialValue = emptyList()
     )
 
@@ -323,7 +333,7 @@ class LauncherViewModel(
     }.flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.Eagerly,
             initialValue = LauncherAppContentState(
                 allApps = emptyList(),
                 filteredApps = emptyList(),
@@ -356,7 +366,7 @@ class LauncherViewModel(
         LauncherUiStateMapper.map(input, appContent)
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly,
         initialValue = LauncherUiState()
     )
 
@@ -395,7 +405,7 @@ class LauncherViewModel(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.Eagerly,
         initialValue = AppGridState()
     )
 
@@ -407,21 +417,43 @@ class LauncherViewModel(
     val firstLaunchCompleted: StateFlow<Boolean> = _firstLaunchCompleted
     val hiddenApps: StateFlow<Set<String>> = _hiddenApps
     val tempHiddenApps: StateFlow<Map<String, Long>> = _tempHiddenApps
+    val showAllHiddenTemporarily: StateFlow<Boolean> = _showAllHiddenTemporarily
 
     init {
         try {
-            // ── Phase 1: Optimistic restore from persistent disk cache ─────────
-            // This is the critical path for process-death recovery. When Android
-            // kills the launcher process, the in-memory AppListCache is lost.
-            // The persistent cache survives process death and restores the app
-            // list in ~50ms, letting the UI render instantly.
+            // ── Phase 1: Optimistic restore with icon hydration ────────────────
+            // The KEY insight: emitting apps without icons and then re-emitting
+            // with icons causes a massive recomposition wave mid-scroll — every
+            // AppModel changes (icon: null → bitmap), triggering the full combine
+            // cascade and GPU texture uploads for all visible items in one frame.
+            //
+            // Fix: read icons from IconDiskCache IN PARALLEL during init, attach
+            // them to the cached apps, and emit ONCE with icons already present.
+            // The subsequent refreshApps() finds previousHadMissingIcons=false
+            // and skips re-emitting unless the package list actually changed.
             viewModelScope.launch {
                 val cachedApps = persistentAppCache.read()
                 if (!cachedApps.isNullOrEmpty()) {
-                    _allApps.value = cachedApps
+                    // Hydrate icons from disk cache before emitting.
+                    // Parallel IO reads: ~200 icons × 10ms / 64 IO threads ≈ 30-80ms.
+                    val hydratedApps = withContext(Dispatchers.IO) {
+                        val selectedPack = settingsManager.selectedIconPack.first()
+                        cachedApps.map { app ->
+                            async {
+                                val cacheKey = if (selectedPack.isNullOrEmpty()) app.versionCode
+                                    else "${selectedPack.hashCode()}_${app.versionCode}".hashCode().toLong()
+                                val bitmap = iconDiskCache.get(app.packageName, cacheKey)
+                                if (bitmap != null) {
+                                    val icon = AppIconBitmap(bitmap)
+                                    icon.imageBitmap // pre-warm GPU texture on IO thread
+                                    app.copy(icon = icon)
+                                } else app
+                            }
+                        }.awaitAll()
+                    }
+                    _allApps.value = hydratedApps
                     _isLoading.value = false
-                    // Also warm the in-memory cache for this process lifetime.
-                    appListCache.update(cachedApps)
+                    appListCache.update(hydratedApps)
                 } else if (appListCache.isFresh()) {
                     // Fallback: in-memory cache survived (e.g. config change).
                     _allApps.value = appListCache.lastApps
@@ -429,7 +461,8 @@ class LauncherViewModel(
                 }
 
                 // Always refresh in background to detect newly installed/removed
-                // apps. If we restored from cache, this is silent (no spinner).
+                // apps. If we restored from cache with icons, this is silent AND
+                // the smart emission check will skip re-emitting (no change).
                 refreshApps(silent = _allApps.value.isNotEmpty())
             }
 
@@ -472,13 +505,14 @@ class LauncherViewModel(
 
     // ── Refresh methods ──────────────────────────────────────────────────────
 
-    fun refreshApps(silent: Boolean = false) {
+    fun refreshApps(silent: Boolean = false, forceEmit: Boolean = false) {
         viewModelScope.launch {
             try {
                 if (!silent) _isLoading.value = true
                 val selectedPack = settingsManager.selectedIconPack.first()
-                val (_, fullApps) = loadAppsUseCase(selectedPack)
                 val respectedCategories = AppCategory.FIXED.toSet() + AppCategory.AI_EXCLUDED
+
+                val (metadataApps, fullApps) = loadAppsUseCase(selectedPack)
 
                 // Do all categorisation and sorting on Default dispatcher so the
                 // main thread is never blocked by heavy list operations.
@@ -488,20 +522,41 @@ class LauncherViewModel(
                             if (app.category in respectedCategories) app
                             else app.copy(category = AppCategory.ALL)
                         }
+                        // Deduplicate by packageName + userHandle to eliminate any
+                        // residual duplicates introduced by MIUI's PackageManager,
+                        // PersistentAppCache race conditions, or smart-grouping side
+                        // effects. This is the last line of defense before the list
+                        // enters the reactive state flow and reaches LazyGrid keys.
+                        .distinctBy { "${it.packageName}|${it.userHandle?.hashCode() ?: 0}" }
                         .sortedBy { it.label.lowercase() }
                 }
 
-            // Single emission: avoids the double-recomposition cascade that
-            // happened when metadata was emitted first and full apps later.
-            _allApps.value = processedApps
-            appListCache.update(processedApps)
+                // ── Smart emission: avoid triggering the entire combine cascade ──
+                // The combine chain (visibleAppsFlow → appsWithMetaFlow →
+                // appContentState → appGridState + uiState) recalculates everything
+                // when _allApps emits. We must emit when:
+                //   a) Package list changed (app installed/uninstalled/updated)
+                //   b) Previous list had null icons (process-death recovery in progress)
+                // We must NOT emit when:
+                //   c) Returning from YouTube after 30 min and nothing changed
+                //      (icons already loaded from IconDiskCache, same packages)
+                val previousApps = _allApps.value
+                val previousFingerprint = previousApps.map { it.packageName to it.versionCode }
+                val newFingerprint = processedApps.map { it.packageName to it.versionCode }
+                val packageListChanged = previousFingerprint != newFingerprint
+                val previousHadMissingIcons = previousApps.any { it.icon == null }
 
-            // Persist to disk so the next process-death recovery is instant.
-            // This is best-effort: if the write fails, the next startup will
-            // just fall back to querying PackageManager.
-            persistentAppCache.write(processedApps)
+                if (packageListChanged || previousHadMissingIcons || forceEmit) {
+                    _allApps.value = processedApps
+                    appListCache.update(processedApps)
+                }
 
-            if (!silent) _isLoading.value = false
+                // Disk write only when the package list actually changed.
+                if (packageListChanged) {
+                    persistentAppCache.write(processedApps)
+                }
+
+                if (!silent) _isLoading.value = false
 
                 if (!_firstLaunchCompleted.value) {
                     settingsManager.setFirstLaunchCompleted(true)
@@ -584,6 +639,10 @@ class LauncherViewModel(
         }
     }
 
+    fun toggleShowHiddenTemporarily() {
+        _showAllHiddenTemporarily.value = !_showAllHiddenTemporarily.value
+    }
+
     fun setActiveCategory(category: String) {
         _activeCategory.value = category
         _searchQuery.value = ""
@@ -597,11 +656,26 @@ class LauncherViewModel(
     }
 
     fun handleBackPress(): Boolean {
-        return if (_showSettings.value) {
-            _showSettings.value = false
-            true
-        } else {
-            false
+        // Priority order: close settings → clear search → reset to favorites.
+        // We always consume the event since a HOME activity has nowhere to go back to.
+        return when {
+            _showSettings.value -> {
+                _showSettings.value = false
+                true
+            }
+            _searchQuery.value.isNotBlank() -> {
+                _searchQuery.value = ""
+                true
+            }
+            _activeCategory.value != AppCategory.FAVORITES -> {
+                _activeCategory.value = AppCategory.FAVORITES
+                true
+            }
+            else -> {
+                // Already at home state. Consume the event — a launcher must
+                // never delegate back to the framework or the activity restarts.
+                true
+            }
         }
     }
 
@@ -698,7 +772,8 @@ class LauncherViewModel(
                 settingsManager.setCategoryHidden(cat, false)
             }
             appRepository.clearIconPackCache()
-            refreshApps()
+            iconDiskCache.clear()
+            refreshApps(forceEmit = true)
         }
     }
 
@@ -706,7 +781,12 @@ class LauncherViewModel(
         viewModelScope.launch {
             settingsManager.setSelectedIconPack(packageName)
             appRepository.clearIconPackCache()
-            refreshApps()
+            // Clear disk cache so stale system/old-pack icons aren't served.
+            // Without this, loadIconWithCache() would miss with the new cache key,
+            // fall through to the icon pack, and if the component match fails,
+            // re-cache the system icon under the new key — silently ignoring the pack.
+            iconDiskCache.clear()
+            refreshApps(forceEmit = true)
         }
     }
 
@@ -888,6 +968,7 @@ class LauncherViewModel(
                 persistentAppCache = container.persistentAppCache,
                 checkProductTourStatusUseCase = container.checkProductTourStatusUseCase,
                 dismissProductTourUseCase = container.dismissProductTourUseCase,
+                iconDiskCache = container.iconDiskCache,
             ) as T
         }
     }

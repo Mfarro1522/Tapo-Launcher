@@ -9,6 +9,9 @@
     <!-- Required for TAPO Labs (AI LLM API calls) -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Required for the uninstall action in the app context menu -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
     <application
         android:name=".TAPOLauncherApp"
         android:allowBackup="true"

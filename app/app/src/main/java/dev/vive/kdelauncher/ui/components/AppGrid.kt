@@ -31,7 +31,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
@@ -161,17 +161,21 @@ fun AppGrid(
                     key = { "${it.packageName}:${it.profileTag.name}" },
                     contentType = { "app_icon" }
                 ) { app ->
-                    val pressBounds = remember { mutableStateOf<Rect?>(null) }
+                    // Capture layout coords for context menu positioning.
+                    // onPlaced fires only when the item's placement changes
+                    // (not on every layout pass like onGloballyPositioned),
+                    // reducing per-frame overhead during scroll.
+                    val coordsRef = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
                     Box(
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            pressBounds.value = coords.boundsInWindow()
+                        modifier = Modifier.onPlaced { coords ->
+                            coordsRef[0] = coords
                         }
                     ) {
                         val onClick = remember(app) { { stableOnAppClick(app) } }
                         val onLongPress = remember(app) {
                             {
                                 menuApp = app
-                                menuBounds = pressBounds.value
+                                menuBounds = coordsRef[0]?.boundsInWindow()
                             }
                         }
                         AppIcon(

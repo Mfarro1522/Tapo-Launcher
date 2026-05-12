@@ -30,23 +30,21 @@ class MainActivity : ComponentActivity() {
 
         val container = (application as TAPOLauncherApp).container
 
-        // Use OnBackPressedDispatcher (modern API) instead of the deprecated
-        // onBackPressed. This properly integrates with the system gesture
-        // navigation and assistant trigger (long-press Home).
+        // A HOME-category activity is the root of the task stack.
+        // When the user presses "back" there is NOTHING behind this activity,
+        // so delegating to the system causes Android to re-launch/re-create it
+        // (the exact "reloads on back" bug).
+        // The correct behavior: let the ViewModel handle UI state resets
+        // (close settings, clear search), and if there's nothing to reset,
+        // simply consume the event — do NOT delegate to the framework.
         onBackPressedDispatcher.addCallback(
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    val handled = launcherViewModel?.handleBackPress() == true
-                    if (!handled) {
-                        // Let the system handle it — Android will never "exit"
-                        // a HOME-category activity on back press, so this
-                        // simply returns control to the OS without swallowing
-                        // the event.
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
-                        isEnabled = true
-                    }
+                    // handleBackPress returns true if it consumed the event
+                    // (e.g., closed settings). If false, we still consume it
+                    // because a launcher has nowhere to "go back" to.
+                    launcherViewModel?.handleBackPress()
                 }
             }
         )
@@ -75,7 +73,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        launcherViewModel?.refreshStatus()
+        // refreshStatus() was here before but it mutates 3 StateFlows
+        // (isDefaultLauncher, hasRealWorkProfile, isWorkProfileLocked) on
+        // EVERY resume, triggering a cascade through systemInput → uiInput →
+        // uiState that recomposes the entire screen. These values rarely
+        // change, so we only check them during ViewModel init and when
+        // explicitly requested (e.g., after returning from the "set default
+        // launcher" settings screen via onNewIntent).
     }
 
     override fun onNewIntent(intent: Intent) {

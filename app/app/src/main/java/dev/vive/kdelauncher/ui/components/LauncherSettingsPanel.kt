@@ -101,6 +101,8 @@ fun LauncherSettingsPanel(
     allApps: List<dev.vive.kdelauncher.data.model.AppModel> = emptyList(),
     onHideApp: (dev.vive.kdelauncher.data.model.AppModel, Int) -> Unit = { _, _ -> },
     onUnhideApp: (String) -> Unit = {},
+    showAllHiddenTemporarily: Boolean = false,
+    onToggleShowHidden: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = LocalColors.current
@@ -679,6 +681,8 @@ fun LauncherSettingsPanel(
             allApps = allApps,
             onHideApp = onHideApp,
             onUnhideApp = onUnhideApp,
+            showAllHiddenTemporarily = showAllHiddenTemporarily,
+            onToggleShowHidden = onToggleShowHidden,
         )
 
         // ── Divider ──────────────────────────────────────
@@ -1163,6 +1167,8 @@ private fun HiddenAppsSection(
     allApps: List<dev.vive.kdelauncher.data.model.AppModel>,
     onHideApp: (dev.vive.kdelauncher.data.model.AppModel, Int) -> Unit,
     onUnhideApp: (String) -> Unit,
+    showAllHiddenTemporarily: Boolean = false,
+    onToggleShowHidden: () -> Unit = {},
 ) {
     val colors = LocalColors.current
     val accent = LocalLauncherAccent.current
@@ -1175,6 +1181,69 @@ private fun HiddenAppsSection(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionLabel("Apps ocultas")
+
+        // ── Temporary show-all toggle ─────────────────────
+        if (allHidden.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (showAllHiddenTemporarily) accent.primaryBg.copy(alpha = 0.3f)
+                        else colors.surfaceVariant.copy(alpha = 0.6f)
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onToggleShowHidden
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (showAllHiddenTemporarily) accent.primaryBg else colors.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (showAllHiddenTemporarily) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = if (showAllHiddenTemporarily) accent.primary else colors.onSurfaceVariant
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = if (showAllHiddenTemporarily) "Mostrando todas las apps" else "Mostrar apps ocultas",
+                            style = LauncherTypography.bodyMedium,
+                            color = colors.onBackground
+                        )
+                        Text(
+                            text = if (showAllHiddenTemporarily) "Temporalmente visible" else "Revelar en el grid temporalmente",
+                            style = LauncherTypography.bodySmall,
+                            color = colors.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                Switch(
+                    checked = showAllHiddenTemporarily,
+                    onCheckedChange = { onToggleShowHidden() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = accent.primary,
+                        checkedTrackColor = accent.primaryBg,
+                        uncheckedThumbColor = colors.onSurfaceVariant,
+                        uncheckedTrackColor = colors.surfaceVariant,
+                    )
+                )
+            }
+        }
 
         Row(
             modifier = Modifier

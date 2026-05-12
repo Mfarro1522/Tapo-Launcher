@@ -84,7 +84,7 @@ class IconPackManagerImpl(private val context: Context) : IconPackManager {
                     } catch (e: Exception) { pkg }
 
                     val icon = try {
-                        ri.loadIcon(pm)?.toBitmap(128, 128)
+                        ri.loadIcon(pm)?.toBitmap(96, 96)
                     } catch (e: Exception) { null }
 
                     packs[pkg] = IconPackInfo(pkg, label, icon)
@@ -120,7 +120,10 @@ class IconPackManagerImpl(private val context: Context) : IconPackManager {
             if (resId == 0) return@withContext null
 
             val drawable: Drawable = resources.getDrawable(resId, null)
-            drawable.toBitmap(128, 128)
+            drawable.toBitmap(
+                dev.vive.kdelauncher.data.platform.AndroidAppPlatformGateway.ICON_SIZE_PX,
+                dev.vive.kdelauncher.data.platform.AndroidAppPlatformGateway.ICON_SIZE_PX
+            )
         } catch (e: Exception) {
             null
         }

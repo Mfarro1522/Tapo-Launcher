@@ -87,9 +87,19 @@ class AndroidAppPlatformGateway(
                 ComponentName(packageName, activityName),
                 0
             )
-            activityInfo.loadIcon(context.packageManager)?.toBitmap(96, 96)
+            activityInfo.loadIcon(context.packageManager)?.toBitmap(ICON_SIZE_PX, ICON_SIZE_PX)
         } catch (_: Exception) {
             null
         }
+    }
+
+    companion object {
+        /**
+         * Icon decode size in pixels.
+         * 192×192 covers up to 4× density at LARGE icon size (40dp × 4 = 160px)
+         * with headroom for quality. ARGB_8888 = 144 KB per icon.
+         * Most commercial launchers use 192 or 256.
+         */
+        const val ICON_SIZE_PX = 192
     }
 }

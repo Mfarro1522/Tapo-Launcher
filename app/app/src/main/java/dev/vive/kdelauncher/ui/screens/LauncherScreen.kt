@@ -62,6 +62,7 @@ fun LauncherScreen(
     val resetCounter by viewModel.homeResetCounter.collectAsStateWithLifecycle()
     val hiddenApps by viewModel.hiddenApps.collectAsStateWithLifecycle()
     val tempHiddenApps by viewModel.tempHiddenApps.collectAsStateWithLifecycle()
+    val showAllHiddenTemporarily by viewModel.showAllHiddenTemporarily.collectAsStateWithLifecycle()
     val colors = LocalColors.current
     val accent = LocalLauncherAccent.current
     val focusManager = LocalFocusManager.current
@@ -259,6 +260,8 @@ fun LauncherScreen(
                     else viewModel.tempHideApp(app.packageName, mins)
                 },
                 onUnhideApp = { viewModel.unhideApp(it) },
+                showAllHiddenTemporarily = showAllHiddenTemporarily,
+                onToggleShowHidden = { viewModel.toggleShowHiddenTemporarily() },
                 modifier = Modifier
                     .padding(horizontal = 4.dp, vertical = 8.dp)
                     .heightIn(max = 420.dp)

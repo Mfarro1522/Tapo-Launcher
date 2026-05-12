@@ -8,6 +8,7 @@ import dev.vive.kdelauncher.data.WorkProfileManagerImpl
 import dev.vive.kdelauncher.data.platform.AndroidAppPlatformGateway
 import dev.vive.kdelauncher.data.platform.AndroidWorkProfilePlatformGateway
 import dev.vive.kdelauncher.data.repository.AppRepositoryImpl
+import dev.vive.kdelauncher.data.repository.IconDiskCache
 import dev.vive.kdelauncher.domain.repository.AppRepository
 import dev.vive.kdelauncher.domain.repository.IconPackManager
 import dev.vive.kdelauncher.domain.repository.ProfileManager
@@ -44,7 +45,15 @@ class AppContainer(private val application: Application) {
     val appRepository: AppRepository =
         AppRepositoryImpl(application.packageName, appPlatformGateway, iconPackManager)
 
-    val loadAppsUseCase = LoadAppsUseCase(appRepository, workProfileManager)
+    /**
+     * On-disk icon cache. Keyed by packageName + versionCode (+ icon pack hash).
+     * Stored in [android.content.Context.getCacheDir] so Android can reclaim space
+     * under storage pressure without affecting app data.
+     * Survives process death, eliminating the ~2 s icon reload delay on launcher resume.
+     */
+    val iconDiskCache = IconDiskCache(application.cacheDir)
+
+    val loadAppsUseCase = LoadAppsUseCase(appRepository, workProfileManager, iconDiskCache)
     val launchAppUseCase = LaunchAppUseCase(application, appRepository, workProfileManager)
     val toggleFavoriteUseCase = ToggleFavoriteUseCase(profileManager)
     val toggleWorkAppUseCase = ToggleWorkAppUseCase(profileManager)

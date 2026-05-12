@@ -112,11 +112,19 @@ internal object LauncherUiStateMapper {
             AppCategory.ALL -> profileFiltered
             else -> profileFiltered.filter { it.category == activeCategory }
         }
+
+        // Guard against duplicate (packageName, profileTag) pairs that would crash
+        // LazyGrid with "Key was already used". MIUI's PackageManager can return the
+        // same package multiple times in certain edge cases (e.g. Chrome with multiple
+        // launcher activities, race between persistent cache and fresh load, or MIUI's
+        // APK overlay system adding phantom entries). distinctBy is O(n) and prevents
+        // the fatal IllegalArgumentException in SubcomposeLayout.
+        val deduplicatedFiltered = filtered.distinctBy { "${it.packageName}:${it.profileTag.name}" }
         val counts = buildCategoryCounts(profileFiltered)
 
         return LauncherAppContentState(
             allApps = appsWithMeta,
-            filteredApps = filtered,
+            filteredApps = deduplicatedFiltered,
             appCounts = counts
         )
     }

@@ -30,10 +30,15 @@ import kotlinx.coroutines.withContext
  *    [getInstalledApps] then loads/caches icons. Use both in sequence for a
  *    perceived-instant start.
  *
- * 3. **Icon size** — Bitmaps are decoded at 128×128 for crisp rendering at any
- *    launcher icon size (SMALL=28dp, MEDIUM=32dp, LARGE=40dp) without blurriness
- *    from upscaling. The memory cache uses 1/4 of available heap (capped at 32 MB)
- *    to comfortably hold 500+ 128×128 ARGB_8888 icons (~500 MB → ~31 MB).
+ * 3. **Icon size** — Bitmaps are decoded at 192×192 for crisp rendering on all
+ *    display densities (up to 4×). 192×192 ARGB_8888 = 144 KB/icon. The LruCache
+ *    is capped at min(heap/6, 32 MB) for smooth performance while avoiding
+ *    triggering MIUI HyperSentinel memory pressure kills.
+ *
+ * 4. **Throttled parallelism** — Icon loading is capped at 4 concurrent decodes
+ *    via a Semaphore in LoadAppsUseCase. This prevents HWUI ImageDecoder
+ *    saturation (logged as "Image decoding logging dropped!").
+
  */
 class AppRepositoryImpl(
     private val appPackageName: String,
@@ -44,11 +49,13 @@ class AppRepositoryImpl(
     companion object {
         /**
          * Max memory for icon cache.
-         * 128×128 ARGB_8888 ≈ 64 KB/icon → 500 icons ~ 31 MB.
-         * Uses 1/4 of available heap (capped at 32 MB) to cover any device.
+         * 192×192 ARGB_8888 ≈ 144 KB/icon → 220 icons ~ 32 MB.
+         * Uses 1/6 of available heap (capped at 32 MB).
+         * Capped conservatively: MIUI HyperSentinel kills aggressively when
+         * RSS climbs fast; keeping the cache bounded prevents those kills.
          */
         private val CACHE_MAX_KB = minOf(
-            (Runtime.getRuntime().maxMemory() / 1024 / 4).toInt(),
+            (Runtime.getRuntime().maxMemory() / 1024 / 6).toInt(),
             32 * 1024  // hard cap at 32 MB
         )
     }
